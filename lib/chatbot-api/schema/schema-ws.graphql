@@ -1,0 +1,20 @@
+type Query {
+  none: String
+}
+
+type Mutation {
+    sendQuery(data: String): String
+  	publishResponse(data: String): String
+}
+
+type Subscription {
+    receiveMessage(sessionId: ID): String
+    		@aws_subscribe(mutations: ["publishResponse"])
+}
+
+
+schema {
+    query: Query
+	mutation: Mutation
+    subscription: Subscription
+}
