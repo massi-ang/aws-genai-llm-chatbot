@@ -7,10 +7,12 @@ import { Construct } from "constructs";
 import { Shared } from "../shared";
 import { IQueue } from "aws-cdk-lib/aws-sqs";
 import { ITopic } from "aws-cdk-lib/aws-sns";
+import { UserPool } from "aws-cdk-lib/aws-cognito";
 
 interface ChatGraphqlApiProps {
     readonly queue: IQueue;
     readonly topic: ITopic;
+    readonly userPool: UserPool;
 }
 
 export class ChatGraphqlApi extends Construct {
@@ -26,7 +28,24 @@ export class ChatGraphqlApi extends Construct {
             schema: appsync.SchemaFile.fromAsset(
                 "lib/chatbot-api/schema/schema-ws.graphql"
             ),
+            authorizationConfig: {
+                additionalAuthorizationModes: [
+                    {
+                        authorizationType: appsync.AuthorizationType.IAM
+                    },
+                    {
+                        authorizationType: appsync.AuthorizationType.USER_POOL,
+                        userPoolConfig: {
+                            userPool: props.userPool
+                        }
+                    }
+                ],
+                defaultAuthorization: {
+                    authorizationType: appsync.AuthorizationType.API_KEY
+                }
+            },
         });
+
 
         const resolverFunction = new Function(this, "lambda-resolver", {
             code: Code.fromAsset(
@@ -44,7 +63,7 @@ export class ChatGraphqlApi extends Construct {
                 "./lib/chatbot-api/functions/outgoing-message-appsync"
             ),
             handler: "index.handler",
-            runtime: Runtime.PYTHON_3_11,
+            runtime: Runtime.NODEJS_18_X,
         })
 
         outgoingMessageAppsync.addEventSource(new SqsEventSource(props.queue))

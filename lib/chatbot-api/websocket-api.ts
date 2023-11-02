@@ -14,10 +14,12 @@ import * as path from "path";
 import { Shared } from "../shared";
 import { Direction } from "../shared/types";
 import { ChatGraphqlApi } from "./appsync-ws";
+import { UserPool } from "aws-cdk-lib/aws-cognito";
 
 interface WebSocketApiProps {
   readonly shared: Shared;
   readonly useAppsync: boolean;
+  readonly userPool: UserPool
 }
 
 export class WebSocketApi extends Construct {
@@ -222,6 +224,7 @@ export class WebSocketApi extends Construct {
       const graphqlApi = new ChatGraphqlApi(this, 'graphql', {
         queue: queue,
         topic: messagesTopic,
+        userPool: props.userPool,
       })
       this.graphqlApi = graphqlApi;
     }
