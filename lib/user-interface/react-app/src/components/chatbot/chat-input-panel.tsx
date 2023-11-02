@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
@@ -56,6 +57,7 @@ import {
   getSelectedModelMetadata,
   getSignedUrl,
   updateMessageHistory,
+  updateMessageHistoryRef,
   //  updateMessageHistory,
 } from "./utils";
 import { receiveMessages } from "../../graphql/subscriptions";
@@ -65,7 +67,7 @@ export interface ChatInputPanelProps {
   setRunning: Dispatch<SetStateAction<boolean>>;
   session: { id: string; loading: boolean };
   messageHistory: ChatBotHistoryItem[];
-  setMessageHistory: Dispatch<SetStateAction<ChatBotHistoryItem[]>>;
+  setMessageHistory: (history: ChatBotHistoryItem[])=>void;//Dispatch<SetStateAction<ChatBotHistoryItem[]>>;
   configuration: ChatBotConfiguration;
   setConfiguration: Dispatch<React.SetStateAction<ChatBotConfiguration>>;
 }
@@ -125,6 +127,9 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     });
   }, []);
 
+
+  const messageHistoryRef = useRef(props.messageHistory);
+
   useEffect(() => {
     async function subscribe() {
       console.log("Subscribing to AppSync");
@@ -139,20 +144,17 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
         authMode: "AMAZON_COGNITO_USER_POOLS",
       }).subscribe({
         next: ({ value }) => {
-          
           const data = value.data!.receiveMessages?.data;
           if (data !== undefined && data !== null) {
-            
             const response: ChatBotMessageResponse = JSON.parse(data);
             console.log(response);
             // if (response.action === ChatBotAction.Heartbeat) {
             //   return;
             // }
 
-            updateMessageHistory(
+            updateMessageHistoryRef(
               props.session.id,
-              props.messageHistory,
-              props.setMessageHistory,
+              messageHistoryRef.current,
               response
             );
 
@@ -160,9 +162,10 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
               response.action === ChatBotAction.FinalResponse ||
               response.action === ChatBotAction.Error
             ) {
-              console.log("Final message received")
+              console.log("Final message received");
               props.setRunning(false);
             }
+            props.setMessageHistory([...messageHistoryRef.current])
           }
         },
         error: (error) => console.warn(error),
@@ -353,23 +356,26 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     });
 
     props.setRunning(true);
+    messageHistoryRef.current = [...messageHistoryRef.current, 
 
-    props.setMessageHistory((prev) =>
-      prev.concat(
-        {
-          type: ChatBotMessageType.Human,
-          content: value,
-          metadata: {
-            ...props.configuration,
-          },
+      {
+        type: ChatBotMessageType.Human,
+        content: value,
+        metadata: {
+          ...props.configuration,
         },
-        {
-          type: ChatBotMessageType.AI,
-          content: "",
-          metadata: {},
-        }
-      )
-    );
+        tokens: []
+      },
+      {
+        type: ChatBotMessageType.AI,
+        tokens: [],
+        content: "",
+        metadata: {},
+      },
+    ];
+
+    props.setMessageHistory(messageHistoryRef.current)
+
     const result = API.graphql({
       query: sendQuery,
       variables: {
@@ -377,8 +383,6 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
       },
     });
     console.log(result);
-
-    //return sendJsonMessage(request);
   };
 
   const connectionStatus = {

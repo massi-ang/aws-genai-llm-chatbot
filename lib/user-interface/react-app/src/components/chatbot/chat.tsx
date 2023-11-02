@@ -90,7 +90,7 @@ export default function Chat(props: { sessionId?: string }) {
           running={running}
           setRunning={setRunning}
           messageHistory={messageHistory}
-          setMessageHistory={setMessageHistory}
+          setMessageHistory={(history)=>setMessageHistory(history)}
           configuration={configuration}
           setConfiguration={setConfiguration}
         />
