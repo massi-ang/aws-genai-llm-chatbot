@@ -1,102 +1,109 @@
-import * as cdk from 'aws-cdk-lib';
-import * as appsync from 'aws-cdk-lib/aws-appsync';
-import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
-import { Code, Function, Runtime } from 'aws-cdk-lib/aws-lambda';
-import { Lambda } from 'aws-cdk-lib/aws-ses-actions';
-import { Construct } from 'constructs';
+import * as cdk from "aws-cdk-lib";
+import * as appsync from "aws-cdk-lib/aws-appsync";
+import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Code, Function, Runtime } from "aws-cdk-lib/aws-lambda";
+import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import { Construct } from "constructs";
+import { Shared } from "../shared";
+import { IQueue } from "aws-cdk-lib/aws-sqs";
+import { ITopic } from "aws-cdk-lib/aws-sns";
 
-const sendMessageResolverCode = `
-import boto3
-import os
+interface ChatGraphqlApiProps {
+    readonly queue: IQueue;
+    readonly topic: ITopic;
+}
 
-sns = boto3.client("sns")
-TOPIC_ARN=os.environ.get("SNS_TOPIC_ARN", "")
-
-def handler(event, context): 
-    
-    if event["field"] == "sendMessage":
-        sendMessage(event["arguments"])
-    
-
-`
-
-export class GraphqlApi extends Construct {
+export class ChatGraphqlApi extends Construct {
     public readonly apiKey: string | undefined;
     public readonly graphQLUrl: string | undefined;
 
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: ChatGraphqlApiProps) {
         super(scope, id);
 
         // makes a GraphQL API
-        const api = new appsync.GraphqlApi(this, 'chatbot-ws-apis', {
-            name: 'chatbot-ws-api',
-            schema: appsync.SchemaFile.fromAsset('lib/chatbot-api/schema/schema-ws.graphql'),
+        const api = new appsync.GraphqlApi(this, "ws-api", {
+            name: "chatbot-ws-api",
+            schema: appsync.SchemaFile.fromAsset(
+                "lib/chatbot-api/schema/schema-ws.graphql"
+            ),
         });
 
-
         const resolverFunction = new Function(this, "lambda-resolver", {
-            code: Code.fromInline(sendMessageResolverCode),
-            handler: 'lambda.handler',
+            code: Code.fromAsset(
+                "./lib/chatbot-api/functions/resolvers/lambda-resolver"
+            ),
+            handler: "index.handler",
+            runtime: Runtime.PYTHON_3_11,
+            environment: {
+                SNS_TOPIC_ARN: props.topic.topicArn
+            }
+        });
+
+        const outgoingMessageAppsync = new Function(this, "outgoing-message-handler", {
+            code: Code.fromAsset(
+                "./lib/chatbot-api/functions/outgoing-message-appsync"
+            ),
+            handler: "index.handler",
             runtime: Runtime.PYTHON_3_11,
         })
 
-        resolverFunction.addToRolePolicy(new PolicyStatement({
-            actions: ["sns:*", "sqs:*"],
-            effect: Effect.ALLOW,
-            resources: ["*"]
-        }))
-        const functionDataSource = api.addLambdaDataSource('resolver-function', resolverFunction)
+        outgoingMessageAppsync.addEventSource(new SqsEventSource(props.queue))
 
-        // api.createResolver('send-message-resolver', {
-        //     typeName: 'Mutation',
-        //     fieldName: 'sendMessage', 
-        //     code: appsync.Code.fromInline(`
-        //     export function request(ctx) {
-        //         return {
-        //             operation: 'Invoke',
-        //             payload: {  field: ctx.info.fieldName, arguments: args, source },
-        //         };
-        //     }
-      
-        //     export function response(ctx) {
-        //         return ctx.result;
-        //     }
-        //     `),
-        //     runtime: appsync.FunctionRuntime.JS_1_0_0,
-        //     dataSource: functionDataSource,
-        // })
+        resolverFunction.addToRolePolicy(
+            new PolicyStatement({
+                actions: ["sns:*", "sqs:*"],
+                effect: Effect.ALLOW,
+                resources: ["*"],
+            })
+        );
+        const functionDataSource = api.addLambdaDataSource(
+            "resolver-function-source",
+            resolverFunction
+        );
+        const noneDataSource = api.addNoneDataSource("none", {
+            name: "relay-source",
+        });
 
-        api.grantMutation(resolverFunction)
+        api.createResolver("send-message-resolver", {
+            typeName: "Mutation",
+            fieldName: "sendQuery",
+            code: appsync.Code.fromAsset(
+                "./lib/chatbot-api/functions/resolvers/send-query-resolver.js"
+            ),
+            runtime: appsync.FunctionRuntime.JS_1_0_0,
+            dataSource: functionDataSource,
+        });
 
-        // api.createResolver('publish-response-resolver', {
-        //     typeName: 'Mutation',
-        //     fieldName: 'publishResponse', 
-        //     code: appsync.Code.fromInline(`
-        //     export function request(ctx) {
-        //         return {
-        //             operation: 'Invoke',
-        //             payload: {  field: ctx.info.fieldName, arguments: args, source },
-        //           };
-        //         }
-      
-        //         export function response(ctx) {
-        //             return ctx.result;
-        //         }
-        //     `),
-        //     runtime: appsync.FunctionRuntime.JS_1_0_0,
-        //     dataSource: new appsync.NoneDataSource(this, "none-data-source", {
-        //         api
-        //     }),
-        // })
+        api.grantMutation(resolverFunction);
+
+        api.createResolver("publish-response-resolver", {
+            typeName: "Mutation",
+            fieldName: "publishResponse",
+            code: appsync.Code.fromAsset(
+                "./lib/chatbot-api/functions/resolvers/publish-response-resolver.js"
+            ),
+            runtime: appsync.FunctionRuntime.JS_1_0_0,
+            dataSource: noneDataSource,
+        });
+
+        api.createResolver("subscription-resolver", {
+            typeName: "Subscription",
+            fieldName: "receiveMessage",
+            code: appsync.Code.fromAsset(
+                "./lib/chatbot-api/functions/resolvers/receive-message-resolver.js"
+            ),
+            runtime: appsync.FunctionRuntime.JS_1_0_0,
+            dataSource: noneDataSource,
+        });
 
         // Prints out URL
         new cdk.CfnOutput(this, "GraphqlWSAPIURL", {
-            value: api.graphqlUrl
+            value: api.graphqlUrl,
         });
 
         // Prints out the AppSync GraphQL API key to the terminal
         new cdk.CfnOutput(this, "GraphqlWSAPIKey", {
-            value: api.apiKey || ''
+            value: api.apiKey || "",
         });
 
         this.apiKey = api.apiKey;

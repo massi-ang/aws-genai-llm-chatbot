@@ -27,6 +27,9 @@ import { ApiClient } from "../../common/api-client/api-client";
 import { AppContext } from "../../common/app-context";
 import { OptionsHelper } from "../../common/helpers/options-helper";
 import { StorageHelper } from "../../common/helpers/storage-helper";
+import { Amplify, API } from "aws-amplify";
+import { GraphQLSubscription } from "@aws-amplify/api";
+import { ReceiveMessageSubscription } from "../../API";
 import {
   ApiResult,
   ModelItem,
@@ -50,7 +53,13 @@ import {
   ChatInputState,
   ImageFile,
 } from "./types";
-import { getSelectedModelMetadata, getSignedUrl, updateMessageHistory } from "./utils";
+import { sendQuery } from "../../graphql/mutations";
+import {
+  getSelectedModelMetadata,
+  getSignedUrl,
+  updateMessageHistory,
+} from "./utils";
+import { receiveMessage } from "../../graphql/subscriptions";
 
 export interface ChatInputPanelProps {
   running: boolean;
@@ -133,6 +142,37 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   });
 
   useEffect(() => {
+    Amplify.configure({
+      aws_appsync_graphqlEndpoint:
+        "https://bhuznxpapnebfiapd24mzblpzy.appsync-api.eu-west-1.amazonaws.com/graphql",
+      aws_appsync_region: "eu-west-1",
+      aws_appsync_authenticationType: "API_KEY",
+      aws_appsync_apiKey: "da2-6esvff7snrbrbptuuiatk6ibtm",
+    });
+  }, []);
+
+  useEffect(() => {
+    async function subscribe() {
+      console.log("Subscribing to AppSync");
+      const sub = await API.graphql<
+        GraphQLSubscription<ReceiveMessageSubscription>
+      >({
+        query: receiveMessage,
+      }).subscribe({
+        next: ({ value }) => console.log(value),
+        error: (error) => console.warn(error),
+      });
+      return sub;
+    }
+
+    const sub = subscribe();
+
+    return () => {
+      sub.then((s) => s.unsubscribe()).catch((err) => console.log(err));
+    };
+  }, []);
+
+  useEffect(() => {
     if (transcript) {
       setState((state) => ({ ...state, value: transcript }));
     }
@@ -192,6 +232,7 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   }, [appContext, state.modelsStatus]);
 
   useEffect(() => {
+    console.log("Init...");
     const onWindowScroll = () => {
       if (ChatScrollState.skipNextScrollEvent) {
         ChatScrollState.skipNextScrollEvent = false;
@@ -315,6 +356,12 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
         }
       )
     );
+    API.graphql({
+      query: sendQuery,
+      variables: {
+        data: JSON.stringify(request),
+      },
+    });
 
     return sendJsonMessage(request);
   };
@@ -352,7 +399,7 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
             ) : (
               <Icon name="microphone-off" variant="disabled" />
             )}
-            
+
             {state.selectedModelMetadata?.inputModalities.includes(
               ChabotInputModality.Image
             ) && (
@@ -362,10 +409,7 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
               >
                 <Icon
                   svg={
-                    <svg
-                      viewBox="0 0 22 22"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
+                    <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
                       <rect
                         x="2"
                         y="2"
@@ -383,12 +427,12 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
             )}
           </SpaceBetween>
           <ImageDialog
-              sessionId={props.session.id}
-              visible={imageDialogVisible}
-              setVisible={setImageDialogVisible}
-              configuration={props.configuration}
-              setConfiguration={props.setConfiguration}
-            />
+            sessionId={props.session.id}
+            visible={imageDialogVisible}
+            setVisible={setImageDialogVisible}
+            configuration={props.configuration}
+            setConfiguration={props.setConfiguration}
+          />
           <TextareaAutosize
             className={styles.input_textarea}
             maxRows={6}
@@ -644,4 +688,3 @@ function getSelectedModelOption(
 
   return selectedModelOption;
 }
-

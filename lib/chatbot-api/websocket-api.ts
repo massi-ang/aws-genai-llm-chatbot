@@ -13,21 +13,48 @@ import { Construct } from "constructs";
 import * as path from "path";
 import { Shared } from "../shared";
 import { Direction } from "../shared/types";
+import { ChatGraphqlApi } from "./appsync-ws";
 
 interface WebSocketApiProps {
   readonly shared: Shared;
+  readonly useAppsync: boolean;
 }
 
 export class WebSocketApi extends Construct {
   public readonly api: apigwv2.WebSocketApi;
   public readonly messagesTopic: sns.Topic;
+  public readonly graphqlApi?: ChatGraphqlApi;
 
   constructor(scope: Construct, id: string, props: WebSocketApiProps) {
     super(scope, id);
-
     // Create the main Message Topic acting as a message bus
     const messagesTopic = new sns.Topic(this, "MessagesTopic");
 
+    const deadLetterQueue = new sqs.Queue(this, "OutgoingMessagesDLQ");
+
+    const queue = new sqs.Queue(this, "OutgoingMessagesQueue", {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      deadLetterQueue: {
+        queue: deadLetterQueue,
+        maxReceiveCount: 3,
+      },
+    });
+
+    // grant eventbridge permissions to send messages to the queue
+    queue.addToResourcePolicy(
+      new iam.PolicyStatement({
+        actions: ["sqs:SendMessage"],
+        resources: [queue.queueArn],
+        principals: [
+          new iam.ServicePrincipal("events.amazonaws.com"),
+          new iam.ServicePrincipal("sqs.amazonaws.com"),
+        ],
+      })
+    );
+
+    // ================================================  
+    // START OF API GW WSS     
+    // ================================================  
     const connectionsTable = new dynamodb.Table(this, "ConnectionsTable", {
       partitionKey: {
         name: "connectionId",
@@ -182,31 +209,22 @@ export class WebSocketApi extends Construct {
       })
     );
 
-    const deadLetterQueue = new sqs.Queue(this, "OutgoingMessagesDLQ");
-
-    const queue = new sqs.Queue(this, "OutgoingMessagesQueue", {
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      deadLetterQueue: {
-        queue: deadLetterQueue,
-        maxReceiveCount: 3,
-      },
-    });
-
-    // grant eventbridge permissions to send messages to the queue
-    queue.addToResourcePolicy(
-      new iam.PolicyStatement({
-        actions: ["sqs:SendMessage"],
-        resources: [queue.queueArn],
-        principals: [
-          new iam.ServicePrincipal("events.amazonaws.com"),
-          new iam.ServicePrincipal("sqs.amazonaws.com"),
-        ],
-      })
-    );
-
     outgoingMessageHandlerFunction.addEventSource(
       new lambdaEventSources.SqsEventSource(queue)
     );
+
+    this.api = webSocketApi;
+    // ================================================  
+    // END OF API GW WSS     
+    // ================================================  
+    if (props.useAppsync) {
+      // Appsync
+      const graphqlApi = new ChatGraphqlApi(this, 'graphql', {
+        queue: queue,
+        topic: messagesTopic,
+      })
+      this.graphqlApi = graphqlApi;
+    }
 
     // Route all outgoing messages to the websocket interface queue
     messagesTopic.addSubscription(
@@ -221,7 +239,6 @@ export class WebSocketApi extends Construct {
       })
     );
 
-    this.api = webSocketApi;
     this.messagesTopic = messagesTopic;
   }
 }
