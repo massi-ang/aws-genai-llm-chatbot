@@ -17,16 +17,10 @@ export function updateMessageHistory(
   messageHistory: ChatBotHistoryItem[],
   setMessageHistory: Dispatch<SetStateAction<ChatBotHistoryItem[]>>,
   response: ChatBotMessageResponse,
-  setState: Dispatch<SetStateAction<ChatInputState>>
 ) {
+  console.log("Update", response, sessionId)
   if (response.data?.sessionId !== sessionId) return;
 
-  if (
-    response.action === ChatBotAction.FinalResponse ||
-    response.action === ChatBotAction.Error
-  ) {
-    setState((state) => ({ ...state, running: false }));
-  }
   if (
     response.action === ChatBotAction.LLMNewToken ||
     response.action === ChatBotAction.FinalResponse ||
@@ -38,7 +32,7 @@ export function updateMessageHistory(
     const hasContent = typeof content !== "undefined";
     const hasToken = typeof token !== "undefined";
     const hasMetadata = typeof metadata !== "undefined";
-
+    console.log("History", messageHistory)
     if (
       messageHistory.length > 0 &&
       messageHistory[messageHistory.length - 1]["type"] !==
@@ -51,6 +45,7 @@ export function updateMessageHistory(
       }
 
       lastMessage.tokens.sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+      console.log(lastMessage)
       if (lastMessage.tokens.length > 0) {
         const lastRunId =
           lastMessage.tokens[lastMessage.tokens.length - 1].runId;
@@ -116,6 +111,8 @@ export function updateMessageHistory(
         ]);
       }
     }
+  } else {
+    console.error(`Unrecognized type ${response.action}`)
   }
 }
 
@@ -150,6 +147,10 @@ export function updateChatSessions(
         ChatBotMessageType.Human
     ) {
       const lastMessage = messageHistory[messageHistory.length - 1];
+      console.log("Last msg", lastMessage)
+      if (lastMessage.metadata !== undefined) {
+        return;
+      }
       lastMessage.tokens = lastMessage.tokens || [];
       if (hasToken) {
         lastMessage.tokens.push(token);

@@ -15,11 +15,14 @@ export const sendQuery = /* GraphQL */ `mutation SendQuery($data: String) {
   APITypes.SendQueryMutationVariables,
   APITypes.SendQueryMutation
 >;
-export const publishResponse =
-  /* GraphQL */ `mutation PublishResponse($data: String) {
-  publishResponse(data: $data)
+export const publishResponse = /* GraphQL */ `mutation PublishResponse($sessionId: String, $data: String) {
+  publishResponse(sessionId: $sessionId, data: $data) {
+    data
+    sessionId
+    __typename
+  }
 }
 ` as GeneratedMutation<
-    APITypes.PublishResponseMutationVariables,
-    APITypes.PublishResponseMutation
-  >;
+  APITypes.PublishResponseMutationVariables,
+  APITypes.PublishResponseMutation
+>;

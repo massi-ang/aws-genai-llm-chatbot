@@ -9,6 +9,7 @@ TOPIC_ARN=os.environ.get("SNS_TOPIC_ARN", "")
 
 def handler(event, context): 
     print(event["arguments"]["data"])
+    print(event["identity"])
     request = json.loads(event["arguments"]["data"])
     message = {
         "action": request["action"],
@@ -17,7 +18,7 @@ def handler(event, context):
         "connectionId": "connection_id",
         "timestamp": str(int(round(datetime.now().timestamp()))),
         "userId": "user_id",
-        "data": event["arguments"]["data"],
+        "data": request["data"],
     }
     print(message)
 

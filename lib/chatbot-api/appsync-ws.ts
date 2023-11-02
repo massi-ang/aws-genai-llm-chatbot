@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as appsync from "aws-cdk-lib/aws-appsync";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
-import { Code, Function, Runtime } from "aws-cdk-lib/aws-lambda";
+import { Code, Function, LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Construct } from "constructs";
 import { Shared } from "../shared";
@@ -21,6 +21,12 @@ export class ChatGraphqlApi extends Construct {
 
     constructor(scope: Construct, id: string, props: ChatGraphqlApiProps) {
         super(scope, id);
+
+        const powertoolsLayer = LayerVersion.fromLayerVersionArn(
+            this,
+            'PowertoolsLayer',
+            `arn:aws:lambda:${cdk.Stack.of(this).region}:094274105915:layer:AWSLambdaPowertoolsTypeScript:22`
+          );
 
         // makes a GraphQL API
         const api = new appsync.GraphqlApi(this, "ws-api", {
@@ -62,19 +68,21 @@ export class ChatGraphqlApi extends Construct {
             code: Code.fromAsset(
                 "./lib/chatbot-api/functions/outgoing-message-appsync"
             ),
+            layers: [powertoolsLayer],
             handler: "index.handler",
             runtime: Runtime.NODEJS_18_X,
         })
 
-        outgoingMessageAppsync.addEventSource(new SqsEventSource(props.queue))
+        outgoingMessageAppsync.addEventSource(new SqsEventSource(props.queue));
 
-        resolverFunction.addToRolePolicy(
-            new PolicyStatement({
-                actions: ["sns:*", "sqs:*"],
-                effect: Effect.ALLOW,
-                resources: ["*"],
-            })
-        );
+        props.topic.grantPublish(resolverFunction);
+        // resolverFunction.addToRolePolicy(
+        //     new PolicyStatement({
+        //         actions: ["sns:*",],
+        //         effect: Effect.ALLOW,
+        //         resources: ["*"],
+        //     })
+        // );
         const functionDataSource = api.addLambdaDataSource(
             "resolver-function-source",
             resolverFunction
@@ -93,7 +101,7 @@ export class ChatGraphqlApi extends Construct {
             dataSource: functionDataSource,
         });
 
-        api.grantMutation(resolverFunction);
+        api.grantMutation(outgoingMessageAppsync);
 
         api.createResolver("publish-response-resolver", {
             typeName: "Mutation",

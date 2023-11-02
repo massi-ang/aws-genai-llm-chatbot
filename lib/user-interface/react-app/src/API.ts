@@ -2,34 +2,49 @@
 /* eslint-disable */
 //  This file was automatically generated and should not be edited.
 
+export type Channel = {
+  __typename: "Channel",
+  data?: string | null,
+  sessionId?: string | null,
+};
+
 export type SendQueryMutationVariables = {
-  data?: string | null;
+  data?: string | null,
 };
 
 export type SendQueryMutation = {
-  sendQuery?: string | null;
+  sendQuery?: string | null,
 };
 
 export type PublishResponseMutationVariables = {
-  data?: string | null;
+  sessionId?: string | null,
+  data?: string | null,
 };
 
 export type PublishResponseMutation = {
-  publishResponse?: string | null;
+  publishResponse?:  {
+    __typename: "Channel",
+    data?: string | null,
+    sessionId?: string | null,
+  } | null,
 };
 
 export type NoneQuery = {
-  none?: string | null;
+  none?: string | null,
 };
 
 export type NoneQueryVariables = {
-  none?: string | null;
+  none?: string | null,
 };
 
-export type ReceiveMessageSubscriptionVariables = {
-  sessionId?: string | null;
+export type ReceiveMessagesSubscriptionVariables = {
+  sessionId?: string | null,
 };
 
-export type ReceiveMessageSubscription = {
-  receiveMessage?: string | null;
+export type ReceiveMessagesSubscription = {
+  receiveMessages?:  {
+    __typename: "Channel",
+    data?: string | null,
+    sessionId?: string | null,
+  } | null,
 };

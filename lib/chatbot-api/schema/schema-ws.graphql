@@ -1,20 +1,30 @@
-type Query {
-  none: String
+type Mutation {
+	sendQuery(data: String): String
+		@aws_cognito_user_pools
+	publishResponse(sessionId: String, data: String): Channel
+		@aws_iam
 }
 
-type Mutation {
-    sendQuery(data: String): String
-  	publishResponse(data: String): String
+type Channel @aws_iam
+@aws_cognito_user_pools
+@aws_api_key {
+	data: String
+	sessionId: String
+}
+
+type Query {
+	none: String
 }
 
 type Subscription {
-    receiveMessage(sessionId: ID): String
-    		@aws_subscribe(mutations: ["publishResponse"])
+	receiveMessages(sessionId: String): Channel
+		@aws_subscribe(mutations: ["publishResponse"])
+@aws_cognito_user_pools
+@aws_api_key
 }
 
-
 schema {
-    query: Query
+	query: Query
 	mutation: Mutation
-    subscription: Subscription
+	subscription: Subscription
 }

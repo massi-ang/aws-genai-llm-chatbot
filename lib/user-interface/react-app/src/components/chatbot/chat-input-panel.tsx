@@ -8,7 +8,7 @@ import {
   Spinner,
   StatusIndicator,
 } from "@cloudscape-design/components";
-import { Auth } from "aws-amplify";
+//import { Auth } from "aws-amplify";
 import {
   Dispatch,
   SetStateAction,
@@ -22,14 +22,14 @@ import SpeechRecognition, {
   useSpeechRecognition,
 } from "react-speech-recognition";
 import TextareaAutosize from "react-textarea-autosize";
-import useWebSocket, { ReadyState } from "react-use-websocket";
+import { ReadyState } from "react-use-websocket";
 import { ApiClient } from "../../common/api-client/api-client";
 import { AppContext } from "../../common/app-context";
 import { OptionsHelper } from "../../common/helpers/options-helper";
 import { StorageHelper } from "../../common/helpers/storage-helper";
 import { Amplify, API } from "aws-amplify";
 import { GraphQLSubscription } from "@aws-amplify/api";
-import { ReceiveMessageSubscription } from "../../API";
+import { ReceiveMessagesSubscription } from "../../API";
 import {
   ApiResult,
   ModelItem,
@@ -43,12 +43,10 @@ import {
   ChabotInputModality,
   ChatBotAction,
   ChatBotConfiguration,
-  ChatBotHeartbeatRequest,
   ChatBotHistoryItem,
   ChatBotMessageResponse,
   ChatBotMessageType,
   ChatBotMode,
-  ChatBotModelInterface,
   ChatBotRunRequest,
   ChatInputState,
   ImageFile,
@@ -58,8 +56,9 @@ import {
   getSelectedModelMetadata,
   getSignedUrl,
   updateMessageHistory,
+  //  updateMessageHistory,
 } from "./utils";
-import { receiveMessage } from "../../graphql/subscriptions";
+import { receiveMessages } from "../../graphql/subscriptions";
 
 export interface ChatInputPanelProps {
   running: boolean;
@@ -106,47 +105,22 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   const [configDialogVisible, setConfigDialogVisible] = useState(false);
   const [imageDialogVisible, setImageDialogVisible] = useState(false);
   const [files, setFiles] = useState<ImageFile[]>([]);
-  const [socketUrl, setSocketUrl] = useState<string | null>(null);
-  const { sendJsonMessage, readyState } = useWebSocket(socketUrl, {
-    share: true,
-    shouldReconnect: () => true,
-    onOpen: () => {
-      const request: ChatBotHeartbeatRequest = {
-        action: ChatBotAction.Heartbeat,
-        modelInterface: ChatBotModelInterface.Langchain,
-      };
-
-      sendJsonMessage(request);
-    },
-    onMessage: (payload: { data: string }) => {
-      const response: ChatBotMessageResponse = JSON.parse(payload.data);
-      if (response.action === ChatBotAction.Heartbeat) {
-        return;
-      }
-
-      updateMessageHistory(
-        props.session.id,
-        props.messageHistory,
-        props.setMessageHistory,
-        response,
-        setState
-      );
-
-      if (
-        response.action === ChatBotAction.FinalResponse ||
-        response.action === ChatBotAction.Error
-      ) {
-        props.setRunning(false);
-      }
-    },
-  });
+  const [readyState, setReadyState] = useState<ReadyState>(
+    ReadyState.UNINSTANTIATED
+  );
 
   useEffect(() => {
     Amplify.configure({
+      Auth: {
+        region: "eu-west-1",
+        userPoolId: "eu-west-1_XczHpZJ0l",
+        userPoolWebClientId: "72n97m18a63iufb5t5mr61qj8f",
+        identityPoolId: "eu-west-1:fcd4f53c-d742-416d-8b1c-ebcfbaf50649",
+      },
       aws_appsync_graphqlEndpoint:
         "https://bhuznxpapnebfiapd24mzblpzy.appsync-api.eu-west-1.amazonaws.com/graphql",
       aws_appsync_region: "eu-west-1",
-      aws_appsync_authenticationType: "API_KEY",
+      aws_appsync_authenticationType: "AMAZON_COGNITO_USER_POOLS",
       aws_appsync_apiKey: "da2-6esvff7snrbrbptuuiatk6ibtm",
     });
   }, []);
@@ -154,23 +128,63 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   useEffect(() => {
     async function subscribe() {
       console.log("Subscribing to AppSync");
+      setReadyState(ReadyState.CONNECTING);
       const sub = await API.graphql<
-        GraphQLSubscription<ReceiveMessageSubscription>
+        GraphQLSubscription<ReceiveMessagesSubscription>
       >({
-        query: receiveMessage,
+        query: receiveMessages,
+        variables: {
+          sessionId: props.session.id,
+        },
+        authMode: "AMAZON_COGNITO_USER_POOLS",
       }).subscribe({
-        next: ({ value }) => console.log(value),
+        next: ({ value }) => {
+          
+          const data = value.data!.receiveMessages?.data;
+          if (data !== undefined && data !== null) {
+            
+            const response: ChatBotMessageResponse = JSON.parse(data);
+            console.log(response);
+            // if (response.action === ChatBotAction.Heartbeat) {
+            //   return;
+            // }
+
+            updateMessageHistory(
+              props.session.id,
+              props.messageHistory,
+              props.setMessageHistory,
+              response
+            );
+
+            if (
+              response.action === ChatBotAction.FinalResponse ||
+              response.action === ChatBotAction.Error
+            ) {
+              console.log("Final message received")
+              props.setRunning(false);
+            }
+          }
+        },
         error: (error) => console.warn(error),
       });
       return sub;
     }
 
     const sub = subscribe();
+    sub
+      .then(() => {
+        setReadyState(ReadyState.OPEN);
+        console.log(`Subscribed to session ${props.session.id}`);
+      })
+      .catch((err) => {
+        console.log(err);
+        setReadyState(ReadyState.CLOSED);
+      });
 
     return () => {
       sub.then((s) => s.unsubscribe()).catch((err) => console.log(err));
     };
-  }, []);
+  }, [props.session.id]);
 
   useEffect(() => {
     if (transcript) {
@@ -183,8 +197,8 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
 
     (async () => {
       const apiClient = new ApiClient(appContext);
-      const [session, modelsResult, workspacesResult] = await Promise.all([
-        Auth.currentSession(),
+      const [/*session,*/ modelsResult, workspacesResult] = await Promise.all([
+        // Auth.currentSession(),
         apiClient.models.getModels(),
         appContext?.config.rag_enabled
           ? apiClient.workspaces.getWorkspaces()
@@ -194,13 +208,13 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
             }),
       ]);
 
-      const jwtToken = session.getAccessToken().getJwtToken();
+      // const jwtToken = session.getAccessToken().getJwtToken();
 
-      if (jwtToken) {
-        setSocketUrl(
-          `${appContext.config.websocket_endpoint}?token=${jwtToken}`
-        );
-      }
+      // if (jwtToken) {
+      //   setSocketUrl(
+      //     `${appContext.config.websocket_endpoint}?token=${jwtToken}`
+      //   );
+      // }
 
       const models = ResultValue.ok(modelsResult) ? modelsResult.data : [];
       const workspaces = ResultValue.ok(workspacesResult)
@@ -356,14 +370,15 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
         }
       )
     );
-    API.graphql({
+    const result = API.graphql({
       query: sendQuery,
       variables: {
         data: JSON.stringify(request),
       },
     });
+    console.log(result);
 
-    return sendJsonMessage(request);
+    //return sendJsonMessage(request);
   };
 
   const connectionStatus = {
