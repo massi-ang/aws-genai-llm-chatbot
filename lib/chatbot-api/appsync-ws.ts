@@ -13,6 +13,7 @@ interface ChatGraphqlApiProps {
     readonly queue: IQueue;
     readonly topic: ITopic;
     readonly userPool: UserPool;
+    readonly shared: Shared;
 }
 
 export class ChatGraphqlApi extends Construct {
@@ -22,11 +23,11 @@ export class ChatGraphqlApi extends Construct {
     constructor(scope: Construct, id: string, props: ChatGraphqlApiProps) {
         super(scope, id);
 
-        const powertoolsLayer = LayerVersion.fromLayerVersionArn(
+        const powertoolsLayerJS = LayerVersion.fromLayerVersionArn(
             this,
-            'PowertoolsLayer',
+            'PowertoolsLayerJS',
             `arn:aws:lambda:${cdk.Stack.of(this).region}:094274105915:layer:AWSLambdaPowertoolsTypeScript:22`
-          );
+        );
 
         // makes a GraphQL API
         const api = new appsync.GraphqlApi(this, "ws-api", {
@@ -46,10 +47,8 @@ export class ChatGraphqlApi extends Construct {
                         }
                     }
                 ],
-                defaultAuthorization: {
-                    authorizationType: appsync.AuthorizationType.API_KEY
-                }
             },
+            xrayEnabled: true,
         });
 
 
@@ -61,14 +60,15 @@ export class ChatGraphqlApi extends Construct {
             runtime: Runtime.PYTHON_3_11,
             environment: {
                 SNS_TOPIC_ARN: props.topic.topicArn
-            }
+            },
+            layers: [props.shared.powerToolsLayer]
         });
 
         const outgoingMessageAppsync = new Function(this, "outgoing-message-handler", {
             code: Code.fromAsset(
                 "./lib/chatbot-api/functions/outgoing-message-appsync"
             ),
-            layers: [powertoolsLayer],
+            layers: [powertoolsLayerJS],
             handler: "index.handler",
             runtime: Runtime.NODEJS_18_X,
         })
@@ -76,13 +76,7 @@ export class ChatGraphqlApi extends Construct {
         outgoingMessageAppsync.addEventSource(new SqsEventSource(props.queue));
 
         props.topic.grantPublish(resolverFunction);
-        // resolverFunction.addToRolePolicy(
-        //     new PolicyStatement({
-        //         actions: ["sns:*",],
-        //         effect: Effect.ALLOW,
-        //         resources: ["*"],
-        //     })
-        // );
+
         const functionDataSource = api.addLambdaDataSource(
             "resolver-function-source",
             resolverFunction

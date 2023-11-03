@@ -28,7 +28,7 @@ import { ApiClient } from "../../common/api-client/api-client";
 import { AppContext } from "../../common/app-context";
 import { OptionsHelper } from "../../common/helpers/options-helper";
 import { StorageHelper } from "../../common/helpers/storage-helper";
-import { Amplify, API } from "aws-amplify";
+import { API } from "aws-amplify";
 import { GraphQLSubscription } from "@aws-amplify/api";
 import { ReceiveMessagesSubscription } from "../../API";
 import {
@@ -56,9 +56,7 @@ import { sendQuery } from "../../graphql/mutations";
 import {
   getSelectedModelMetadata,
   getSignedUrl,
-  updateMessageHistory,
   updateMessageHistoryRef,
-  //  updateMessageHistory,
 } from "./utils";
 import { receiveMessages } from "../../graphql/subscriptions";
 
@@ -111,24 +109,12 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     ReadyState.UNINSTANTIATED
   );
 
+  const messageHistoryRef = useRef<ChatBotHistoryItem[]>([]);
+
   useEffect(() => {
-    Amplify.configure({
-      Auth: {
-        region: "eu-west-1",
-        userPoolId: "eu-west-1_XczHpZJ0l",
-        userPoolWebClientId: "72n97m18a63iufb5t5mr61qj8f",
-        identityPoolId: "eu-west-1:fcd4f53c-d742-416d-8b1c-ebcfbaf50649",
-      },
-      aws_appsync_graphqlEndpoint:
-        "https://bhuznxpapnebfiapd24mzblpzy.appsync-api.eu-west-1.amazonaws.com/graphql",
-      aws_appsync_region: "eu-west-1",
-      aws_appsync_authenticationType: "AMAZON_COGNITO_USER_POOLS",
-      aws_appsync_apiKey: "da2-6esvff7snrbrbptuuiatk6ibtm",
-    });
-  }, []);
+    messageHistoryRef.current = props.messageHistory
+  }, [props.messageHistory])
 
-
-  const messageHistoryRef = useRef(props.messageHistory);
 
   useEffect(() => {
     async function subscribe() {
@@ -148,9 +134,6 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
           if (data !== undefined && data !== null) {
             const response: ChatBotMessageResponse = JSON.parse(data);
             console.log(response);
-            // if (response.action === ChatBotAction.Heartbeat) {
-            //   return;
-            // }
 
             updateMessageHistoryRef(
               props.session.id,

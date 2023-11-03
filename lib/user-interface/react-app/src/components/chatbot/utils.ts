@@ -5,7 +5,6 @@ import {
   ChatBotHistoryItem,
   ChatBotMessageResponse,
   ChatBotMessageType,
-  ChatInputState,
 } from "./types";
 import { ChatSession } from "./multi-chat";
 import { ModelItem } from "../../common/types";

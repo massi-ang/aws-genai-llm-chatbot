@@ -10,7 +10,7 @@ import {
     Context,
     SQSBatchResponse,
   } from 'aws-lambda';
-  import { mutation } from './graphql';
+  import { graphQlQuery } from './graphql';
  
   const processor = new BatchProcessor(EventType.SQS); 
   const logger = new Logger();
@@ -20,6 +20,7 @@ import {
     if (payload) {
       const item = JSON.parse(payload);
       logger.info('Processed item', { item });
+      const req = JSON.parse(item.Message);
       /*
       payload: str = record.body
       message: dict = json.loads(payload)
@@ -28,10 +29,21 @@ import {
       user_id = detail["userId"]
       connection_id = detail["connectionId"]
       */
-      await mutation(item.Message);
+
+      const query = /* GraphQL */ `
+        mutation Mutation {
+          publishResponse (data: ${JSON.stringify(item.Message)}, sessionId: "${req.data.sessionId}") {
+            data
+            sessionId
+          }
+        }
+    `;
+      const resp = await graphQlQuery(query);
+      logger.info(resp)
     }
   };
  
+
   export const handler = async (
     event: SQSEvent,
     context: Context

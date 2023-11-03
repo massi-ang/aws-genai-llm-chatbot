@@ -9,7 +9,7 @@ const AWS_REGION = process.env.AWS_REGION || 'eu-west-1';
 
 const endpoint = new URL(GRAPHQL_ENDPOINT ?? "");
 
-export const mutation = async (payload: string) => {
+export const graphQlQuery = async (query: string) => {
   
   const signer = new SignatureV4({
     credentials: defaultProvider(),
@@ -18,15 +18,7 @@ export const mutation = async (payload: string) => {
     sha256: Sha256
   });
 
-  const req = JSON.parse(payload);
-  const query = /* GraphQL */ `
-    mutation Mutation {
-      publishResponse (data: ${JSON.stringify(payload)}, sessionId: "${req.data.sessionId}") {
-        data
-        sessionId
-      }
-    }
-`;
+  
   const requestToBeSigned = new HttpRequest({
     method: 'POST',
     headers: {

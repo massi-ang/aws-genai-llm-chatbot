@@ -225,6 +225,7 @@ export class WebSocketApi extends Construct {
         queue: queue,
         topic: messagesTopic,
         userPool: props.userPool,
+        shared: props.shared,
       })
       this.graphqlApi = graphqlApi;
     }
