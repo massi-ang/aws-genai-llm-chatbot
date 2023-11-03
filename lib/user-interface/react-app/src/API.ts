@@ -6,10 +6,11 @@ export type Channel = {
   __typename: "Channel",
   data?: string | null,
   sessionId?: string | null,
+  userId?: string | null,
 };
 
 export type SendQueryMutationVariables = {
-  data?: string | null,
+  data: string,
 };
 
 export type SendQueryMutation = {
@@ -17,8 +18,9 @@ export type SendQueryMutation = {
 };
 
 export type PublishResponseMutationVariables = {
-  sessionId?: string | null,
-  data?: string | null,
+  sessionId: string,
+  userId: string,
+  data: string,
 };
 
 export type PublishResponseMutation = {
@@ -26,6 +28,7 @@ export type PublishResponseMutation = {
     __typename: "Channel",
     data?: string | null,
     sessionId?: string | null,
+    userId?: string | null,
   } | null,
 };
 
@@ -38,7 +41,7 @@ export type NoneQueryVariables = {
 };
 
 export type ReceiveMessagesSubscriptionVariables = {
-  sessionId?: string | null,
+  sessionId: string,
 };
 
 export type ReceiveMessagesSubscription = {
@@ -46,5 +49,6 @@ export type ReceiveMessagesSubscription = {
     __typename: "Channel",
     data?: string | null,
     sessionId?: string | null,
+    userId?: string | null,
   } | null,
 };

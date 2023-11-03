@@ -8,17 +8,22 @@ type GeneratedMutation<InputType, OutputType> = string & {
   __generatedMutationOutput: OutputType;
 };
 
-export const sendQuery = /* GraphQL */ `mutation SendQuery($data: String) {
+export const sendQuery = /* GraphQL */ `mutation SendQuery($data: String!) {
   sendQuery(data: $data)
 }
 ` as GeneratedMutation<
   APITypes.SendQueryMutationVariables,
   APITypes.SendQueryMutation
 >;
-export const publishResponse = /* GraphQL */ `mutation PublishResponse($sessionId: String, $data: String) {
-  publishResponse(sessionId: $sessionId, data: $data) {
+export const publishResponse = /* GraphQL */ `mutation PublishResponse(
+  $sessionId: String!
+  $userId: String!
+  $data: String!
+) {
+  publishResponse(sessionId: $sessionId, userId: $userId, data: $data) {
     data
     sessionId
+    userId
     __typename
   }
 }
