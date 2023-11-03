@@ -25,6 +25,8 @@ export interface UserInterfaceProps {
   readonly identityPool: cognitoIdentityPool.IdentityPool;
   readonly api: ChatBotApi;
   readonly chatbotFilesBucket: s3.Bucket;
+  readonly crossEncodersEnabled: boolean;
+  readonly sagemakerEmbeddingsEnabled: boolean;
 }
 
 export class UserInterface extends Construct {
@@ -183,6 +185,8 @@ export class UserInterface extends Construct {
         websocket_endpoint: `wss://${distribution.distributionDomainName}/socket`,
         appsync_endpoint: props.api.graphqlApi?.graphQLUrl,
         rag_enabled: props.config.rag.enabled,
+        cross_encoders_enabled: props.crossEncodersEnabled,
+        sagemaker_embeddings_enabled: props.sagemakerEmbeddingsEnabled,
         default_embeddings_model: Utils.getDefaultEmbeddingsModel(props.config),
         default_cross_encoder_model: Utils.getDefaultCrossEncoderModel(
           props.config

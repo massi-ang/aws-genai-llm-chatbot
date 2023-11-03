@@ -150,6 +150,10 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
       identityPool: authentication.identityPool,
       api: chatBotApi,
       chatbotFilesBucket: chatBotApi.filesBucket,
+      crossEncodersEnabled:
+        typeof ragEngines?.sageMakerRagModels?.model !== "undefined",
+      sagemakerEmbeddingsEnabled:
+        typeof ragEngines?.sageMakerRagModels?.model !== "undefined",
     });
   }
 }
