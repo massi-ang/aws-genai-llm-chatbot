@@ -13,7 +13,6 @@ import { JsonView, darkStyles } from "react-json-view-lite";
 import ReactMarkdown from "react-markdown";
 import styles from "../../styles/chat.module.scss";
 import {
-  ChatBotConfiguration,
   ChatBotHistoryItem,
   ChatBotMessageType,
   ImageFile,
@@ -25,8 +24,7 @@ import "../../styles/app.scss";
 
 export interface ChatMessageProps {
   message: ChatBotHistoryItem;
-  configuration?: ChatBotConfiguration;
-  showMetadata?: boolean;
+  showMetadata: boolean;
 }
 
 export default function ChatMessage(props: ChatMessageProps) {
@@ -64,7 +62,7 @@ export default function ChatMessage(props: ChatMessageProps) {
           footer={
             ((props.showMetadata && props.message.metadata) ||
               (props.message.metadata &&
-                props.configuration?.showMetadata)) && (
+                props.showMetadata)) && (
               <ExpandableSection variant="footer" headerText="Metadata">
                 <JsonView
                   data={props.message.metadata}

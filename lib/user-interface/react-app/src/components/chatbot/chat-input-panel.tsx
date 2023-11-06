@@ -8,7 +8,6 @@ import {
   Spinner,
   StatusIndicator,
 } from "@cloudscape-design/components";
-//import { Auth } from "aws-amplify";
 import {
   Dispatch,
   SetStateAction,
@@ -130,6 +129,8 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
         authMode: "AMAZON_COGNITO_USER_POOLS",
       }).subscribe({
         next: ({ value }) => {
+          console.log(`Graphql message:`)
+          console.log(value)
           const data = value.data!.receiveMessages?.data;
           if (data !== undefined && data !== null) {
             const response: ChatBotMessageResponse = JSON.parse(data);
@@ -168,7 +169,10 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
       });
 
     return () => {
-      sub.then((s) => s.unsubscribe()).catch((err) => console.log(err));
+      sub.then((s) => {
+        console.log(`Unsubscribing from ${props.session.id}`);
+        s.unsubscribe();
+      }).catch((err) => console.log(err));
     };
   }, [props.session.id]);
 
@@ -193,14 +197,6 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
               data: [],
             }),
       ]);
-
-      // const jwtToken = session.getAccessToken().getJwtToken();
-
-      // if (jwtToken) {
-      //   setSocketUrl(
-      //     `${appContext.config.websocket_endpoint}?token=${jwtToken}`
-      //   );
-      // }
 
       const models = ResultValue.ok(modelsResult) ? modelsResult.data : [];
       const workspaces = ResultValue.ok(workspacesResult)

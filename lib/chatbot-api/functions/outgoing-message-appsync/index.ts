@@ -32,12 +32,14 @@ import {
 
       const query = /* GraphQL */ `
         mutation Mutation {
-          publishResponse (data: ${JSON.stringify(item.Message)}, sessionId: "${req.data.sessionId}") {
+          publishResponse (data: ${JSON.stringify(item.Message)}, sessionId: "${req.data.sessionId}", userId: "${req.userId}") {
             data
             sessionId
+            userId
           }
         }
     `;
+      logger.info(query)
       const resp = await graphQlQuery(query);
       logger.info(resp)
     }

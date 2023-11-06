@@ -109,7 +109,7 @@ export class ChatGraphqlApi extends Construct {
 
         api.createResolver("subscription-resolver", {
             typeName: "Subscription",
-            fieldName: "receiveMessage",
+            fieldName: "receiveMessages",
             code: appsync.Code.fromAsset(
                 "./lib/chatbot-api/functions/resolvers/receive-message-resolver.js"
             ),

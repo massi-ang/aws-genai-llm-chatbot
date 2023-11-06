@@ -70,7 +70,7 @@ export default function Chat(props: { sessionId?: string }) {
           <ChatMessage
             key={idx}
             message={message}
-            configuration={configuration}
+            showMetadata={configuration.showMetadata}
           />
         ))}
       </SpaceBetween>
