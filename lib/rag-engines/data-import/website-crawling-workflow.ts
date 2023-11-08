@@ -13,6 +13,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import { MultiDirAsset } from "../../shared/multi-dir-asset";
 
 export interface WebsiteCrawlingWorkflowProps {
   readonly config: SystemConfig;
@@ -39,7 +40,7 @@ export class WebsiteCrawlingWorkflow extends Construct {
       "WebsiteParserFunction",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(
             __dirname,
             "./functions/website-crawling-workflow/website-parser"
@@ -52,7 +53,6 @@ export class WebsiteCrawlingWorkflow extends Construct {
         layers: [
           props.shared.powerToolsLayer,
           props.shared.commonLayer,
-          props.shared.pythonSDKLayer,
         ],
         timeout: cdk.Duration.minutes(15),
         logRetention: logs.RetentionDays.ONE_WEEK,
@@ -70,7 +70,7 @@ export class WebsiteCrawlingWorkflow extends Construct {
           DOCUMENTS_TABLE_NAME:
             props.ragDynamoDBTables.documentsTable.tableName ?? "",
           DOCUMENTS_BY_COMPOUND_KEY_INDEX_NAME:
-            props.ragDynamoDBTables.documentsByCompountKeyIndexName ?? "",
+            props.ragDynamoDBTables.documentsByCompoundKeyIndexName ?? "",
           SAGEMAKER_RAG_MODELS_ENDPOINT:
             props.sageMakerRagModelsEndpoint?.attrEndpointName ?? "",
           OPEN_SEARCH_COLLECTION_ENDPOINT:

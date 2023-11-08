@@ -1,20 +1,14 @@
-
 import {
-
   OpenSearchWorkspaceCreateInput,
 } from "../../../common/types";
-
 import {
   Container,
   Header,
   SpaceBetween,
   FormField,
   Input,
-
   ExpandableSection,
-
 } from "@cloudscape-design/components";
-
 import EmbeddingSelector from "./embeddings-selector-field";
 import { CrossEncoderSelectorField } from "./cross-encoder-selector-field";
 import { ChunkSelectorField } from "./chunks-selector";

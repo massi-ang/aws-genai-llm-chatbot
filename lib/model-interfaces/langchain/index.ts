@@ -12,6 +12,7 @@ import * as path from "path";
 import { RagEngines } from "../../rag-engines";
 import { Shared } from "../../shared";
 import { SystemConfig } from "../../shared/types";
+import { MultiDirAsset } from "../../shared/multi-dir-asset";
 
 interface LangChainInterfaceProps {
   readonly shared: Shared;
@@ -31,7 +32,7 @@ export class LangChainInterface extends Construct {
 
     const requestHandler = new lambda.Function(this, "RequestHandler", {
       vpc: props.shared.vpc,
-      code: lambda.Code.fromAsset(
+      code: props.shared.sharedCode.bundleWithLambdaAsset(
         path.join(__dirname, "./functions/request-handler")
       ),
       handler: "index.handler",
@@ -44,7 +45,6 @@ export class LangChainInterface extends Construct {
       layers: [
         props.shared.powerToolsLayer,
         props.shared.commonLayer,
-        props.shared.pythonSDKLayer,
       ],
       environment: {
         ...props.shared.defaultEnvironmentVariables,

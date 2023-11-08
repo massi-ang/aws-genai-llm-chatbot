@@ -10,6 +10,7 @@ import * as path from "path";
 import { Shared } from "../../shared";
 import { SystemConfig } from "../../shared/types";
 import { RagDynamoDBTables } from "../rag-dynamodb-tables";
+import { MultiDirAsset } from "../../shared/multi-dir-asset";
 
 export interface CreateOpenSearchWorkspaceProps {
   readonly config: SystemConfig;
@@ -36,7 +37,7 @@ export class CreateOpenSearchWorkspace extends Construct {
       "CreateOpenSearchWorkspaceFunction",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/create-workflow/create")
         ),
         runtime: props.shared.pythonRuntime,
@@ -45,7 +46,6 @@ export class CreateOpenSearchWorkspace extends Construct {
         layers: [
           props.shared.powerToolsLayer,
           props.shared.commonLayer,
-          props.shared.pythonSDKLayer,
         ],
         timeout: cdk.Duration.minutes(5),
         logRetention: logs.RetentionDays.ONE_WEEK,

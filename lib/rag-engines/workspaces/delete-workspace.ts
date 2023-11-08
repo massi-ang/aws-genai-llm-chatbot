@@ -35,7 +35,7 @@ export class DeleteWorkspace extends Construct {
       "DeleteWorkspaceFunction",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/delete-workspace-workflow/delete")
         ),
         runtime: props.shared.pythonRuntime,
@@ -44,7 +44,6 @@ export class DeleteWorkspace extends Construct {
         layers: [
           props.shared.powerToolsLayer,
           props.shared.commonLayer,
-          props.shared.pythonSDKLayer,
         ],
         timeout: cdk.Duration.minutes(15),
         logRetention: logs.RetentionDays.ONE_WEEK,
@@ -61,7 +60,7 @@ export class DeleteWorkspace extends Construct {
           DOCUMENTS_TABLE_NAME:
             props.ragDynamoDBTables?.documentsTable.tableName ?? "",
           DOCUMENTS_BY_COMPOUND_KEY_INDEX_NAME:
-            props.ragDynamoDBTables?.documentsByCompountKeyIndexName ?? "",
+            props.ragDynamoDBTables?.documentsByCompoundKeyIndexName ?? "",
           DEFAULT_KENDRA_S3_DATA_SOURCE_BUCKET_NAME:
             props.kendraRetrieval?.kendraS3DataSourceBucket?.bucketName ?? "",
           OPEN_SEARCH_COLLECTION_ENDPOINT:

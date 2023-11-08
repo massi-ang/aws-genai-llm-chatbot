@@ -14,6 +14,7 @@ import { Construct } from "constructs";
 import * as path from "path";
 import { Shared } from "../../shared";
 import { SystemConfig } from "../../shared/types";
+import { MultiDirAsset } from "../../shared/multi-dir-asset";
 
 interface IdeficsInterfaceProps {
   readonly shared: Shared;
@@ -154,7 +155,7 @@ export class IdeficsInterface extends Construct {
       "IdeficsInterfaceRequestHandler",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/request-handler")
         ),
         runtime: props.shared.pythonRuntime,
@@ -162,7 +163,6 @@ export class IdeficsInterface extends Construct {
         layers: [
           props.shared.powerToolsLayer,
           props.shared.commonLayer,
-          props.shared.pythonSDKLayer,
         ],
         architecture: props.shared.lambdaArchitecture,
         tracing: lambda.Tracing.ACTIVE,
