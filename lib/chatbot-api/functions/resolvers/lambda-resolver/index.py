@@ -24,7 +24,7 @@ def handler(event, context: LambdaContext):
         "connectionId": "connection_id",
         "timestamp": str(int(round(datetime.now().timestamp()))),
         "userId": event["identity"]["sub"],
-        "data": request["data"],
+        "data": request.get("data", {}),
     }
     print(message)
 

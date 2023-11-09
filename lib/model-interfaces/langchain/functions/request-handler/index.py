@@ -52,14 +52,18 @@ def on_llm_new_token(
 def handle_heartbeat(record):
     connection_id = record["connectionId"]
     user_id = record["userId"]
-
+    session_id = record["data"]["sessionId"]
+    
     send_to_client(
         {
             "type": "text",
             "action": ChatbotAction.HEARTBEAT.value,
             "connectionId": connection_id,
             "timestamp": str(int(round(datetime.now().timestamp()))),
-            "userId": user_id
+            "userId": user_id,
+            "data": {
+                "sessionId": session_id,
+            }
         }
     )
 

@@ -29,6 +29,8 @@ import {
   ChatBotMode,
   ChabotInputModality,
   ChabotOutputModality,
+  ChatBotHeartbeatRequest,
+  ChatBotModelInterface,
 } from "./types";
 import {
   ApiResult,
@@ -240,6 +242,11 @@ export default function MultiChat() {
           if (data !== undefined && data !== null) {
             const response: ChatBotMessageResponse = JSON.parse(data);
             console.log(response);
+            if (response.action === ChatBotAction.Heartbeat) {
+              console.log("Heartbeat pong!")
+              return;
+            }
+
             const sessionId = response.data.sessionId;
             const session = refChatSessions.current.filter((c) => c.id === sessionId)[0];
             if (session !== undefined) {
@@ -257,10 +264,25 @@ export default function MultiChat() {
     }
 
     
+    
     const sub = subscribe(session.id);
     sub
       .then(() => {
         console.log(`Subscribed to session ${session.id}}`);
+        const request: ChatBotHeartbeatRequest = {
+          action: ChatBotAction.Heartbeat,
+          modelInterface: ChatBotModelInterface.Langchain,
+          data: {
+            sessionId: session.id,
+          }
+        } 
+        const result = API.graphql({
+          query: sendQuery,
+          variables: {
+            data: JSON.stringify(request),
+          },
+        });
+        console.log(result);
       })
       .catch((err) => {
         console.log(err);
