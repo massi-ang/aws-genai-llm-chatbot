@@ -15,6 +15,9 @@ import { RestApi } from "./rest-api";
 import { WebSocketApi } from "./websocket-api";
 import { ChatGraphqlApi } from "./appsync-ws";
 
+import * as ec2 from "aws-cdk-lib/aws-ec2";
+
+
 export interface ChatBotApiProps {
   readonly shared: Shared;
   readonly config: SystemConfig;
@@ -32,6 +35,8 @@ export class ChatBotApi extends Construct {
   public readonly byUserIdIndex: string;
   public readonly filesBucket: s3.Bucket;
   public readonly graphqlApi?: ChatGraphqlApi;
+  
+  public readonly endpointAPIGateway: ec2.InterfaceVpcEndpoint;
 
   constructor(scope: Construct, id: string, props: ChatBotApiProps) {
     super(scope, id);
@@ -56,5 +61,7 @@ export class ChatBotApi extends Construct {
     this.byUserIdIndex = chatTables.byUserIdIndex;
     this.filesBucket = chatBuckets.filesBucket;
     this.graphqlApi = webSocketApi.graphqlApi;
+    
+    this.endpointAPIGateway = restApi.endpointAPIGateway;
   }
 }

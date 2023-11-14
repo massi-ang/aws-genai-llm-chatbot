@@ -85,7 +85,7 @@ export class UserInterface extends Construct {
               },
             ],
             customOriginSource: {
-              domainName: `${props.api.restApi.restApiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
+              domainName: `${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
               originHeaders: {
                 "X-Origin-Verify": props.shared.xOriginVerifySecret
                   .secretValueFromJson("headerValue")
