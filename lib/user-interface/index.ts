@@ -43,120 +43,133 @@ export class UserInterface extends Construct {
       websiteIndexDocument: "index.html",
       websiteErrorDocument: "index.html",
     });
+    
+    // Allow access to websiteBucket from VPC 
+    websiteBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        resources: [websiteBucket.arnForObjects('*')],
+        actions: ["s3:List*", "s3:Get*"],
+        principals:[new iam.AnyPrincipal()],
+        conditions: {"StringEquals": {
+					"aws:SourceVpc": props.shared.vpc.vpcId
+				}}
 
-    const originAccessIdentity = new cf.OriginAccessIdentity(this, "S3OAI");
-    websiteBucket.grantRead(originAccessIdentity);
-    props.chatbotFilesBucket.grantRead(originAccessIdentity);
-
-    const distribution = new cf.CloudFrontWebDistribution(
-      this,
-      "Distirbution",
-      {
-        viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        priceClass: cf.PriceClass.PRICE_CLASS_ALL,
-        httpVersion: cf.HttpVersion.HTTP2_AND_3,
-        originConfigs: [
-          {
-            behaviors: [{ isDefaultBehavior: true }],
-            s3OriginSource: {
-              s3BucketSource: websiteBucket,
-              originAccessIdentity,
-            },
-          },
-          {
-            behaviors: [
-              {
-                pathPattern: "/api/*",
-                allowedMethods: cf.CloudFrontAllowedMethods.ALL,
-                viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                defaultTtl: cdk.Duration.seconds(0),
-                forwardedValues: {
-                  queryString: true,
-                  headers: [
-                    "Referer",
-                    "Origin",
-                    "Authorization",
-                    "Content-Type",
-                    "x-forwarded-user",
-                    "Access-Control-Request-Headers",
-                    "Access-Control-Request-Method",
-                  ],
-                },
-              },
-            ],
-            customOriginSource: {
-              domainName: `${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
-              originHeaders: {
-                "X-Origin-Verify": props.shared.xOriginVerifySecret
-                  .secretValueFromJson("headerValue")
-                  .unsafeUnwrap(),
-              },
-            },
-          },
-          {
-            behaviors: [
-              {
-                pathPattern: "/socket",
-                allowedMethods: cf.CloudFrontAllowedMethods.ALL,
-                viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                forwardedValues: {
-                  queryString: true,
-                  headers: [
-                    "Sec-WebSocket-Key",
-                    "Sec-WebSocket-Version",
-                    "Sec-WebSocket-Protocol",
-                    "Sec-WebSocket-Accept",
-                    "Sec-WebSocket-Extensions",
-                  ],
-                },
-              },
-            ],
-            customOriginSource: {
-              domainName: `${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
-              originHeaders: {
-                "X-Origin-Verify": props.shared.xOriginVerifySecret
-                  .secretValueFromJson("headerValue")
-                  .unsafeUnwrap(),
-              },
-            },
-          },
-          {
-            behaviors: [
-              {
-                pathPattern: "/chabot/files/*",
-                allowedMethods: cf.CloudFrontAllowedMethods.ALL,
-                viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                defaultTtl: cdk.Duration.seconds(0),
-                forwardedValues: {
-                  queryString: true,
-                  headers: [
-                    "Referer",
-                    "Origin",
-                    "Authorization",
-                    "Content-Type",
-                    "x-forwarded-user",
-                    "Access-Control-Request-Headers",
-                    "Access-Control-Request-Method",
-                  ],
-                },
-              },
-            ],
-            s3OriginSource: {
-              s3BucketSource: props.chatbotFilesBucket,
-              originAccessIdentity,
-            },
-          },
-        ],
-        errorConfigurations: [
-          {
-            errorCode: 404,
-            errorCachingMinTtl: 0,
-            responseCode: 200,
-            responsePagePath: "/index.html",
-          },
-        ],
-      }
+      })
     );
+
+    // const originAccessIdentity = new cf.OriginAccessIdentity(this, "S3OAI");
+    // websiteBucket.grantRead(originAccessIdentity);
+    // props.chatbotFilesBucket.grantRead(originAccessIdentity);
+
+    // const distribution = new cf.CloudFrontWebDistribution(
+    //   this,
+    //   "Distirbution",
+    //   {
+    //     viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    //     priceClass: cf.PriceClass.PRICE_CLASS_ALL,
+    //     httpVersion: cf.HttpVersion.HTTP2_AND_3,
+    //     originConfigs: [
+    //       {
+    //         behaviors: [{ isDefaultBehavior: true }],
+    //         s3OriginSource: {
+    //           s3BucketSource: websiteBucket,
+    //           originAccessIdentity,
+    //         },
+    //       },
+    //       {
+    //         behaviors: [
+    //           {
+    //             pathPattern: "/api/*",
+    //             allowedMethods: cf.CloudFrontAllowedMethods.ALL,
+    //             viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    //             defaultTtl: cdk.Duration.seconds(0),
+    //             forwardedValues: {
+    //               queryString: true,
+    //               headers: [
+    //                 "Referer",
+    //                 "Origin",
+    //                 "Authorization",
+    //                 "Content-Type",
+    //                 "x-forwarded-user",
+    //                 "Access-Control-Request-Headers",
+    //                 "Access-Control-Request-Method",
+    //               ],
+    //             },
+    //           },
+    //         ],
+    //         customOriginSource: {
+    //           domainName: `${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
+    //           originHeaders: {
+    //             "X-Origin-Verify": props.shared.xOriginVerifySecret
+    //               .secretValueFromJson("headerValue")
+    //               .unsafeUnwrap(),
+    //           },
+    //         },
+    //       },
+    //       {
+    //         behaviors: [
+    //           {
+    //             pathPattern: "/socket",
+    //             allowedMethods: cf.CloudFrontAllowedMethods.ALL,
+    //             viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    //             forwardedValues: {
+    //               queryString: true,
+    //               headers: [
+    //                 "Sec-WebSocket-Key",
+    //                 "Sec-WebSocket-Version",
+    //                 "Sec-WebSocket-Protocol",
+    //                 "Sec-WebSocket-Accept",
+    //                 "Sec-WebSocket-Extensions",
+    //               ],
+    //             },
+    //           },
+    //         ],
+    //         customOriginSource: {
+    //           domainName: `${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
+    //           originHeaders: {
+    //             "X-Origin-Verify": props.shared.xOriginVerifySecret
+    //               .secretValueFromJson("headerValue")
+    //               .unsafeUnwrap(),
+    //           },
+    //         },
+    //       },
+    //       {
+    //         behaviors: [
+    //           {
+    //             pathPattern: "/chabot/files/*",
+    //             allowedMethods: cf.CloudFrontAllowedMethods.ALL,
+    //             viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    //             defaultTtl: cdk.Duration.seconds(0),
+    //             forwardedValues: {
+    //               queryString: true,
+    //               headers: [
+    //                 "Referer",
+    //                 "Origin",
+    //                 "Authorization",
+    //                 "Content-Type",
+    //                 "x-forwarded-user",
+    //                 "Access-Control-Request-Headers",
+    //                 "Access-Control-Request-Method",
+    //               ],
+    //             },
+    //           },
+    //         ],
+    //         s3OriginSource: {
+    //           s3BucketSource: props.chatbotFilesBucket,
+    //           originAccessIdentity,
+    //         },
+    //       },
+    //     ],
+    //     errorConfigurations: [
+    //       {
+    //         errorCode: 404,
+    //         errorCachingMinTtl: 0,
+    //         responseCode: 200,
+    //         responsePagePath: "/index.html",
+    //       },
+    //     ],
+    //   }
+    // );
 
     const exportsAsset = s3deploy.Source.jsonData("aws-exports.json", {
       aws_project_region: cdk.Aws.REGION,
@@ -181,8 +194,8 @@ export class UserInterface extends Construct {
         },
       },
       config: {
-        api_endpoint: `https://${distribution.distributionDomainName}/api`,
-        websocket_endpoint: `wss://${distribution.distributionDomainName}/socket`,
+        api_endpoint: `https://${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/api`, //`https://${distribution.distributionDomainName}/api`,
+        websocket_endpoint:  `wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //`wss://${distribution.distributionDomainName}/socket`,
         appsync_endpoint: props.api.graphqlApi?.graphQLUrl,
         rag_enabled: props.config.rag.enabled,
         cross_encoders_enabled: props.crossEncodersEnabled,
@@ -289,14 +302,14 @@ export class UserInterface extends Construct {
       prune: false,
       sources: [asset, exportsAsset],
       destinationBucket: websiteBucket,
-      distribution,
+      //distribution,
     });
 
     // ###################################################
     // Outputs
     // ###################################################
-    new cdk.CfnOutput(this, "UserInterfaceDomainName", {
-      value: `https://${distribution.distributionDomainName}`,
-    });
+    // new cdk.CfnOutput(this, "UserInterfaceDomainName", {
+    //   value: `https://${distribution.distributionDomainName}`,
+    // });
   }
 }
