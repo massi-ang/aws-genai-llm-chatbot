@@ -32,27 +32,27 @@ export class ChatGraphqlApi extends Construct {
       }:094274105915:layer:AWSLambdaPowertoolsTypeScript:22`
     );
     
-    // //Create Security group
-    // const appSyncEndpointSG = new ec2.SecurityGroup(this, "appSyncEndpointSG", {
-    //     description: "Security Group for AppSync Endpoint",
-    //     vpc: props.shared.vpc
-    // });
-    // //apiGatewayEndpointSG.addIngressRule(ec2.Peer.ipv4('15.248.4.93/30'), ec2.Port.tcp(443));
+    //Create Security group
+    const appSyncEndpointSG = new ec2.SecurityGroup(this, "appSyncEndpointSG", {
+        description: "Security Group for AppSync Endpoint",
+        vpc: props.shared.vpc
+    });
+    //apiGatewayEndpointSG.addIngressRule(ec2.Peer.ipv4('15.248.4.93/30'), ec2.Port.tcp(443));
 
-    // //Create API Gateway Interface VPC Endpoint
-    // const endpointAppSync = new ec2.InterfaceVpcEndpoint(this, "endpointAppSync", {
-    //     service: ec2.InterfaceVpcEndpointAwsService.APP_SYNC,
-    //     vpc: props.shared.vpc,
-    //     subnets: props.shared.vpc.selectSubnets({
-    //         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-    //     }),
-    //     privateDnsEnabled: true,
-    //     securityGroups: [appSyncEndpointSG]
-    // });
+    //Create API Gateway Interface VPC Endpoint
+    const endpointAppSync = new ec2.InterfaceVpcEndpoint(this, "endpointAppSync", {
+        service: ec2.InterfaceVpcEndpointAwsService.APP_SYNC,
+        vpc: props.shared.vpc,
+        subnets: props.shared.vpc.selectSubnets({
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+        }),
+        privateDnsEnabled: true,
+        securityGroups: [appSyncEndpointSG]
+    });
 
     // makes a GraphQL API
-    const api = new appsync.GraphqlApi(this, "ws-api", {
-      name: "chatbot-ws-api",
+    const api = new appsync.GraphqlApi(this, "ws-api-priv", {
+      name: "chatbot-ws-api-priv",
       schema: appsync.SchemaFile.fromAsset(
         "lib/chatbot-api/schema/schema-ws.graphql"
       ),
@@ -70,7 +70,7 @@ export class ChatGraphqlApi extends Construct {
         ],
       },
       xrayEnabled: true,
-      //visibility: appsync.Visibility.PRIVATE,
+      visibility: appsync.Visibility.PRIVATE,
     });
 
     const resolverFunction = new Function(this, "lambda-resolver", {
@@ -97,7 +97,8 @@ export class ChatGraphqlApi extends Construct {
         runtime: Runtime.NODEJS_18_X,
         environment: {
           API_ENDPOINT: api.graphqlUrl,
-        }
+        },
+        vpc: props.shared.vpc,
       }
     );
 
