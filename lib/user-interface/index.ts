@@ -6,6 +6,8 @@ import * as cf from "aws-cdk-lib/aws-cloudfront";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
+import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as ec2 from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 import {
   ExecSyncOptionsWithBufferEncoding,
@@ -56,6 +58,27 @@ export class UserInterface extends Construct {
 
       })
     );
+    
+    // //Create Security group
+    // const albSG = new ec2.SecurityGroup(this, "apiGatewayEndpointSG", {
+    //     description: "Security Group for Api Gateway Endpoint",
+    //     vpc: props.shared.vpc
+    // });
+    
+    // const loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'websiteLoadBalancer', {
+    //   vpc: props.shared.vpc,
+    //   internetFacing: false,
+    //   securityGroup: albSG,
+    // });
+    
+    // // TODO: Get s3 vpc endpoint ip addresses
+    // const listener = loadBalancer.addListener('s3WebsiteListener', { port: 443 });
+    // listener.addTargets('s3WebsiteTarget', {
+    //   targets: [new targets.LambdaTarget(lambdaFunction)],
+    //   healthCheck: {
+    //     enabled: true,
+    //   }
+    // });
 
     // const originAccessIdentity = new cf.OriginAccessIdentity(this, "S3OAI");
     // websiteBucket.grantRead(originAccessIdentity);
@@ -195,7 +218,7 @@ export class UserInterface extends Construct {
       },
       config: {
         api_endpoint: `https://${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/api`, //`https://${distribution.distributionDomainName}/api`,
-        websocket_endpoint:  `wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //`wss://${distribution.distributionDomainName}/socket`,
+        //websocket_endpoint: `wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //`wss://${distribution.distributionDomainName}/socket`,
         appsync_endpoint: props.api.graphqlApi?.graphQLUrl,
         rag_enabled: props.config.rag.enabled,
         cross_encoders_enabled: props.crossEncodersEnabled,

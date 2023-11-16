@@ -66,7 +66,7 @@ export class Shared extends Construct {
         vpcId: props.config.vpc.vpcId,
       }) as ec2.Vpc;
     }
-
+    
     if (
       typeof props.config.vpc?.createVpcEndpoints === "undefined" ||
       props.config.vpc?.createVpcEndpoints === true

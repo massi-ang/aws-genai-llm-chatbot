@@ -93,8 +93,14 @@ def handle_value_error(e: ValidationError):
 )
 @tracer.capture_lambda_handler
 def handler(event: dict, context: LambdaContext) -> dict:
-    origin_verify_header_value = genai_core.parameters.get_origin_verify_header_value()
-    if event["headers"]["X-Origin-Verify"] == origin_verify_header_value:
-        return app.resolve(event, context)
+    
+    # This is Cloudfront specific. 
+    # TOOD: Is there a check we should do with ALB?
+    
+    #origin_verify_header_value = genai_core.parameters.get_origin_verify_header_value()
+    #if event["headers"]["X-Origin-Verify"] == origin_verify_header_value:
+    
+    
+    return app.resolve(event, context)
 
-    return {"statusCode": 403, "body": "Forbidden"}
+    #return {"statusCode": 403, "body": "Forbidden"}

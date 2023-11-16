@@ -53,6 +53,17 @@ export class WebSocketApi extends Construct {
         ],
       })
     );
+    
+    if (props.useAppsync) {
+      // Appsync
+      const graphqlApi = new ChatGraphqlApi(this, 'graphql', {
+        queue: queue,
+        topic: messagesTopic,
+        userPool: props.userPool,
+        shared: props.shared,
+      })
+      this.graphqlApi = graphqlApi;
+    } else {
 
     // ================================================  
     // START OF API GW WSS     
@@ -219,15 +230,6 @@ export class WebSocketApi extends Construct {
     // ================================================  
     // END OF API GW WSS     
     // ================================================  
-    if (props.useAppsync) {
-      // Appsync
-      const graphqlApi = new ChatGraphqlApi(this, 'graphql', {
-        queue: queue,
-        topic: messagesTopic,
-        userPool: props.userPool,
-        shared: props.shared,
-      })
-      this.graphqlApi = graphqlApi;
     }
 
     // Route all outgoing messages to the websocket interface queue
