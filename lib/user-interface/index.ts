@@ -39,7 +39,14 @@ export class UserInterface extends Construct {
 
     const appPath = path.join(__dirname, "react-app");
     const buildPath = path.join(appPath, "dist");
-
+    
+    // PRIVATE WEBSITE 
+    // REQUIRES: 
+    // 1. Certificate ARN and Domain of website to be added to 'bin/config.json': 
+    //    "certificate" : "arn:aws:acm:ap-southeast-2:1234567890:certificate/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXX",
+    //    "domain" : "sub.example.com"
+    
+    
     // Website ALB 
     const albSecurityGroup = new ec2.SecurityGroup(this, 'WebsiteApplicationLoadBalancerSG', {
             vpc: props.shared.vpc,
