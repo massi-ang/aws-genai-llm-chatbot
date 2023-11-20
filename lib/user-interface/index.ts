@@ -40,7 +40,7 @@ export class UserInterface extends Construct {
     const appPath = path.join(__dirname, "react-app");
     const buildPath = path.join(appPath, "dist");
 
-    
+    // Website ALB 
     const albSecurityGroup = new ec2.SecurityGroup(this, 'WebsiteApplicationLoadBalancerSG', {
             vpc: props.shared.vpc,
             allowAllOutbound: false
@@ -81,6 +81,7 @@ export class UserInterface extends Construct {
     loadBalancer.logAccessLogs(albLogBucket)
     
     // Adding Listener
+    // Using ACM certificate ARN passed in through props/config file 
     let albListener: elbv2.ApplicationListener;
     if (props.config.certificate) {
         albListener = loadBalancer.addListener('ALBLHTTPS',
@@ -107,7 +108,6 @@ export class UserInterface extends Construct {
     
     // The Amazon S3 PrivateLink Endpoint is a REST API Endpoint, which means that trailing slash requests will return XML directory listings by default.
     // To work around this, you’ll create a redirect rule to point all requests ending in a trailing slash to index.html.
-    
    albListener.addAction('privateLinkRedirectPath', {
     priority: 1,
     conditions: [
@@ -240,29 +240,10 @@ export class UserInterface extends Construct {
     
     // TODO: Add route53 record to loadbalancer
     
-
     
-    // //Create Security group
-    // const albSG = new ec2.SecurityGroup(this, "apiGatewayEndpointSG", {
-    //     description: "Security Group for Api Gateway Endpoint",
-    //     vpc: props.shared.vpc
-    // });
     
-    // const loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'websiteLoadBalancer', {
-    //   vpc: props.shared.vpc,
-    //   internetFacing: false,
-    //   securityGroup: albSG,
-    // });
+    // ORIGINAL CLOUDFRONT IMPLEMENTATION
     
-    // // TODO: Get s3 vpc endpoint ip addresses
-    // const listener = loadBalancer.addListener('s3WebsiteListener', { port: 443 });
-    // listener.addTargets('s3WebsiteTarget', {
-    //   targets: [new targets.LambdaTarget(lambdaFunction)],
-    //   healthCheck: {
-    //     enabled: true,
-    //   }
-    // });
-
     // const originAccessIdentity = new cf.OriginAccessIdentity(this, "S3OAI");
     // websiteBucket.grantRead(originAccessIdentity);
     // props.chatbotFilesBucket.grantRead(originAccessIdentity);
