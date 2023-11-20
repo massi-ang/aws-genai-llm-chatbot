@@ -63,6 +63,8 @@ export interface SystemConfig {
     vpcId?: string;
     createVpcEndpoints?: boolean;
   };
+  certificate?: string;
+  domain?: string;
   bedrock?: {
     enabled?: boolean;
     region?: SupportedRegion;

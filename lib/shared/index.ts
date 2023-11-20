@@ -28,6 +28,8 @@ export class Shared extends Construct {
   readonly commonLayer: lambda.ILayerVersion;
   readonly powerToolsLayer: lambda.ILayerVersion;
   readonly sharedCode: SharedAssetBundler;
+  readonly s3vpcEndpoint: ec2.InterfaceVpcEndpoint;
+
 
   constructor(scope: Construct, id: string, props: SharedProps) {
     super(scope, id);
@@ -67,6 +69,7 @@ export class Shared extends Construct {
       }) as ec2.Vpc;
     }
     
+
     if (
       typeof props.config.vpc?.createVpcEndpoints === "undefined" ||
       props.config.vpc?.createVpcEndpoints === true
@@ -100,6 +103,9 @@ export class Shared extends Construct {
         service: ec2.InterfaceVpcEndpointAwsService.SAGEMAKER_RUNTIME,
         open: true,
       });
+      
+      this.s3vpcEndpoint = s3vpcEndpoint;
+
     }
 
     const configParameter = new ssm.StringParameter(this, "Config", {
@@ -151,6 +157,7 @@ export class Shared extends Construct {
     this.apiKeysSecret = apiKeysSecret;
     this.powerToolsLayer = powerToolsLayer;
     this.commonLayer = commonLayer.layer;
+
 
     new cdk.CfnOutput(this, "ApiKeysSecretName", {
       value: apiKeysSecret.secretName,
