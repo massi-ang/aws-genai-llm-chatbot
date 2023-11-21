@@ -5,6 +5,7 @@ import { Construct } from "constructs";
 import { RagEngines } from "../rag-engines";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as cognito from "aws-cdk-lib/aws-cognito";
+import * as cognitoIdentityPool from "@aws-cdk/aws-cognito-identitypool-alpha";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -18,6 +19,7 @@ export interface RestApiProps {
   readonly config: SystemConfig;
   readonly ragEngines?: RagEngines;
   readonly userPool: cognito.UserPool;
+  readonly identityPool: cognitoIdentityPool.IdentityPool;
   readonly sessionsTable: dynamodb.Table;
   readonly byUserIdIndex: string;
   readonly modelsParameter: ssm.StringParameter;
@@ -291,18 +293,18 @@ export class RestApi extends Construct {
         new iam.PolicyStatement({
           effect: iam.Effect.ALLOW,
           actions: ['execute-api:Invoke'],
-          principals: [new iam.AnyPrincipal()], // TODO: change to Cognito user pool users???
+          principals: [new iam.AnyPrincipal()], // TODO: change to Cognito user/identity pool role? [props.identityPool.authenticatedRole]?
           resources: ['execute-api:/*/*/*'],
         })
       ]
     })
     
     //Grant api gateway invoke permission on lambda
-    //apiHandler.grantInvoke(new iam.ServicePrincipal('apigateway.amazonaws.com'));
+    // apiHandler.grantInvoke(new iam.ServicePrincipal('apigateway.amazonaws.com'));
 
     const chatBotApi = new apigateway.RestApi(this, "ChatBotApi", {
       endpointConfiguration: {
-        types: [ apigateway.EndpointType.PRIVATE ],//REGIONAL],//
+        types: [ apigateway.EndpointType.PRIVATE ],//REGIONAL],
         vpcEndpoints: [ endpointAPIGateway ]
       },
       policy: apiResourcePolicy,

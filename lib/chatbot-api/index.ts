@@ -5,6 +5,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as ssm from "aws-cdk-lib/aws-ssm";
+import * as cognitoIdentityPool from "@aws-cdk/aws-cognito-identitypool-alpha";
 import { Construct } from "constructs";
 import { RagEngines } from "../rag-engines";
 import { Shared } from "../shared";
@@ -23,6 +24,7 @@ export interface ChatBotApiProps {
   readonly config: SystemConfig;
   readonly ragEngines?: RagEngines;
   readonly userPool: cognito.UserPool;
+  readonly identityPool: cognitoIdentityPool.IdentityPool;
   readonly modelsParameter: ssm.StringParameter;
   readonly models: SageMakerModelEndpoint[];
 }

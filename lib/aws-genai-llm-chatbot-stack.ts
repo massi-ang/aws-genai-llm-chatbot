@@ -47,6 +47,7 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
       config: props.config,
       ragEngines: ragEngines,
       userPool: authentication.userPool,
+      identityPool: authentication.identityPool,
       modelsParameter: models.modelsParameter,
       models: models.models,
     });

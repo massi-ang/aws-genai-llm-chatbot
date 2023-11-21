@@ -237,7 +237,7 @@ export class UserInterface extends Construct {
         new iam.PolicyStatement({
             effect: iam.Effect.ALLOW,
             actions: ['s3:GetObject', "s3:List*"],
-            principals: [new iam.AnyPrincipal()],
+            principals: [new iam.AnyPrincipal()], // TODO: restrict to the S3 VPC Endpoints
             resources: [websiteBucket.bucketArn, `${websiteBucket.bucketArn}/*`],
             conditions: {
                 "StringEquals": { "aws:SourceVpce": s3EndpointId }
@@ -390,7 +390,7 @@ export class UserInterface extends Construct {
       config: {
         api_endpoint: `https://${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/api`, //`https://${distribution.distributionDomainName}/api`,
         //websocket_endpoint: `wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //`wss://${distribution.distributionDomainName}/socket`,
-        appsync_endpoint: props.api.graphqlApi?.graphQLUrl, // TODO update with AppSync VPC endpoint
+        appsync_endpoint: props.api.graphqlApi?.graphQLUrl, 
         rag_enabled: props.config.rag.enabled,
         cross_encoders_enabled: props.crossEncodersEnabled,
         sagemaker_embeddings_enabled: props.sagemakerEmbeddingsEnabled,
