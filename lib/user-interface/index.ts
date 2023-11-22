@@ -44,10 +44,7 @@ export class UserInterface extends Construct {
     const buildPath = path.join(appPath, "dist");
     
     // Bucket Creation and website hosting
-    let websiteBucket: s3.Bucket;
     let domainName: string;
-    let httpProtocol: string;
-    let wsProtocol: string;
     if (props.config.domain) {
       domainName = props.config.domain;
     } else {
@@ -62,7 +59,8 @@ export class UserInterface extends Construct {
       }
       );
 
-    websiteBucket = new s3.Bucket(this, "WebsiteBucket", {
+
+    const websiteBucket = new s3.Bucket(this, "WebsiteBucket", {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         autoDeleteObjects: true,
@@ -73,6 +71,19 @@ export class UserInterface extends Construct {
         websiteIndexDocument: "index.html",
         websiteErrorDocument: "index.html",
     });
+    
+    // Deploy either Private (only accessible within VPC) or Public facing website
+    let apiEndpoint: string;
+    let websocketEndpoint: string;
+    if (props.config.privateWebsite) {
+      const privateWebsite = new PrivateWebsite(this, "PrivateWebsite", {...props, websiteBucket: websiteBucket });
+      apiEndpoint = `https://${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/api`
+      websocketEndpoint = ''
+    } else {
+      const publicWebsite = new PublicWebsite(this, "PublicWebsite", {...props, websiteBucket: websiteBucket });
+      apiEndpoint = `https://${publicWebsite.distribution.distributionDomainName}/api`
+      websocketEndpoint = `wss://${publicWebsite.distribution.distributionDomainName}/socket`
+    }
 
   
     const exportsAsset = s3deploy.Source.jsonData("aws-exports.json", {
@@ -98,8 +109,8 @@ export class UserInterface extends Construct {
         },
       },
       config: {
-        api_endpoint: `https://${props.api.restApi.restApiId}-${props.api.endpointAPIGateway.vpcEndpointId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/api`, //`https://${distribution.distributionDomainName}/api`,
-        //websocket_endpoint: `wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //`wss://${distribution.distributionDomainName}/socket`,
+        api_endpoint: apiEndpoint,
+        websocket_endpoint: websocketEndpoint, // ,`wss://${props.api.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}/socket`, //
         appsync_endpoint: props.api.graphqlApi?.graphQLUrl, 
         rag_enabled: props.config.rag.enabled,
         cross_encoders_enabled: props.crossEncodersEnabled,
@@ -201,30 +212,13 @@ export class UserInterface extends Construct {
         },
       },
     });
-
+    
     new s3deploy.BucketDeployment(this, "UserInterfaceDeployment", {
       prune: false,
       sources: [asset, exportsAsset],
       destinationBucket: websiteBucket,
-      //distribution,
+      //distribution // TODO: take in distribution so invalidations occur on changes to UI 
     });
-    
-    
-    // Deploy either Private (only accessible within VPC) or Public facing website
-    if (props.config.privateWebsite) {
-      const privateWebsite = new PrivateWebsite(this, "PrivateWebsite", {...props, websiteBucket: websiteBucket });
 
-    } else {
-      const publicWebsite = new PublicWebsite(this, "PublicWebsite", {...props, websiteBucket: websiteBucket });
-    }
-    
-
-
-    // ###################################################
-    // Outputs
-    // ###################################################
-    // new cdk.CfnOutput(this, "UserInterfaceDomainName", {
-    //   value: `https://${distribution.distributionDomainName}`,
-    // });
   }
 }

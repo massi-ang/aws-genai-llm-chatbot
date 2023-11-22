@@ -51,19 +51,29 @@ export class ChatBotApi extends Construct {
       sessionsTable: chatTables.sessionsTable,
       byUserIdIndex: chatTables.byUserIdIndex,
     });
+    
+    let webSocketApi: WebSocketApi;
+    
+    // Deploy either Private (only accessible within VPC) or Public facing Websocket
+    if (props.config.privateWebsite){
+      webSocketApi = new WebSocketApi(this, "WebSocketApi", {...props, useAppsync: true  });
+      this.graphqlApi = webSocketApi.graphqlApi;
 
-    const webSocketApi = new WebSocketApi(this, "WebSocketApi", {...props, useAppsync: true });
+    }
+    else {
+      webSocketApi = new WebSocketApi(this, "WebSocketApi", {...props, useAppsync: false  });
+      this.webSocketApi = webSocketApi.api;
+
+    }
+    
 
     //const graphQLApi = new GraphqlApi(this, "graphql-ws-api");
 
     this.restApi = restApi.api;
-    this.webSocketApi = webSocketApi.api;
     this.messagesTopic = webSocketApi.messagesTopic;
     this.sessionsTable = chatTables.sessionsTable;
     this.byUserIdIndex = chatTables.byUserIdIndex;
     this.filesBucket = chatBuckets.filesBucket;
-    this.graphqlApi = webSocketApi.graphqlApi;
-    
     this.endpointAPIGateway = restApi.endpointAPIGateway;
   }
 }

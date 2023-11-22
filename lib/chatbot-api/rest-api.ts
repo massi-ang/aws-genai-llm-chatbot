@@ -270,61 +270,88 @@ export class RestApi extends Construct {
         );
       }
     }
-    //Create Security group
-    const apiGatewayEndpointSG = new ec2.SecurityGroup(this, "apiGatewayEndpointSG", {
-        description: "Security Group for Api Gateway Endpoint",
-        vpc: props.shared.vpc
-    });
-    //apiGatewayEndpointSG.addIngressRule(ec2.Peer.ipv4('15.248.4.93/30'), ec2.Port.tcp(443));
-
-    //Create API Gateway Interface VPC Endpoint
-    const endpointAPIGateway = new ec2.InterfaceVpcEndpoint(this, "endpointAPIGateway", {
-        service: ec2.InterfaceVpcEndpointAwsService.APIGATEWAY,
-        vpc: props.shared.vpc,
-        subnets: props.shared.vpc.selectSubnets({
-            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-        }),
-        privateDnsEnabled: true,
-        securityGroups: [apiGatewayEndpointSG]
-    });
     
-    const apiResourcePolicy = new iam.PolicyDocument({
-      statements: [
-        new iam.PolicyStatement({
-          effect: iam.Effect.ALLOW,
-          actions: ['execute-api:Invoke'],
-          principals: [new iam.AnyPrincipal()], // TODO: change to Cognito user/identity pool role? [props.identityPool.authenticatedRole]?
-          resources: ['execute-api:/*/*/*'],
-        })
-      ]
-    })
-    
-    //Grant api gateway invoke permission on lambda
-    // apiHandler.grantInvoke(new iam.ServicePrincipal('apigateway.amazonaws.com'));
+    // Create Private REST API if Private Website
+    let chatBotApi: apigateway.RestApi;
+    if (props.config.privateWebsite) {
+      //Create Security group
+      const apiGatewayEndpointSG = new ec2.SecurityGroup(this, "apiGatewayEndpointSG", {
+          description: "Security Group for Api Gateway Endpoint",
+          vpc: props.shared.vpc
+      });
+      //apiGatewayEndpointSG.addIngressRule(ec2.Peer.ipv4('15.248.4.93/30'), ec2.Port.tcp(443));
+  
+      //Create API Gateway Interface VPC Endpoint
+      const endpointAPIGateway = new ec2.InterfaceVpcEndpoint(this, "endpointAPIGateway", {
+          service: ec2.InterfaceVpcEndpointAwsService.APIGATEWAY,
+          vpc: props.shared.vpc,
+          subnets: props.shared.vpc.selectSubnets({
+              subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+          }),
+          privateDnsEnabled: true,
+          securityGroups: [apiGatewayEndpointSG]
+      });
+      
+      const apiResourcePolicy = new iam.PolicyDocument({
+        statements: [
+          new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: ['execute-api:Invoke'],
+            principals: [new iam.AnyPrincipal()], // TODO: change to Cognito user/identity pool role? [props.identityPool.authenticatedRole]?
+            resources: ['execute-api:/*/*/*'],
+          })
+        ]
+      })
+  
+      chatBotApi = new apigateway.RestApi(this, "ChatBotApi", {
+        endpointConfiguration: {
+          types: [  apigateway.EndpointType.PRIVATE ],
+          vpcEndpoints: [ endpointAPIGateway ]
+        },
+        policy: apiResourcePolicy,
+        //endpointTypes: [apigateway.EndpointType.REGIONAL],
+        cloudWatchRole: true,
+        defaultCorsPreflightOptions: {
+          allowOrigins: apigateway.Cors.ALL_ORIGINS,
+          allowMethods: apigateway.Cors.ALL_METHODS,
+          allowHeaders: ["Content-Type", "Authorization", "X-Amz-Date"],
+          maxAge: cdk.Duration.minutes(10),
+        },
+        deploy: true,
+        deployOptions: {
+          stageName: "api",
+          loggingLevel: apigateway.MethodLoggingLevel.INFO,
+          tracingEnabled: true,
+          metricsEnabled: true,
+          throttlingRateLimit: 2500,
+        },
+      });
+      
+      this.endpointAPIGateway = endpointAPIGateway;
 
-    const chatBotApi = new apigateway.RestApi(this, "ChatBotApi", {
-      endpointConfiguration: {
-        types: [ apigateway.EndpointType.PRIVATE ],//REGIONAL],
-        vpcEndpoints: [ endpointAPIGateway ]
-      },
-      policy: apiResourcePolicy,
-      //endpointTypes: [apigateway.EndpointType.REGIONAL],
-      cloudWatchRole: true,
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ["Content-Type", "Authorization", "X-Amz-Date"],
-        maxAge: cdk.Duration.minutes(10),
-      },
-      deploy: true,
-      deployOptions: {
-        stageName: "api",
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        tracingEnabled: true,
-        metricsEnabled: true,
-        throttlingRateLimit: 2500,
-      },
-    });
+    } else {
+      chatBotApi = new apigateway.RestApi(this, "ChatBotApi", {
+        endpointConfiguration: {
+          types: [  apigateway.EndpointType.REGIONAL ],
+        },
+        cloudWatchRole: true,
+        defaultCorsPreflightOptions: {
+          allowOrigins: apigateway.Cors.ALL_ORIGINS,
+          allowMethods: apigateway.Cors.ALL_METHODS,
+          allowHeaders: ["Content-Type", "Authorization", "X-Amz-Date"],
+          maxAge: cdk.Duration.minutes(10),
+        },
+        deploy: true,
+        deployOptions: {
+          stageName: "api",
+          loggingLevel: apigateway.MethodLoggingLevel.INFO,
+          tracingEnabled: true,
+          metricsEnabled: true,
+          throttlingRateLimit: 2500,
+        },
+      });
+    }
+    
 
     const cognitoAuthorizer = new apigateway.CfnAuthorizer(
       this,
@@ -353,6 +380,5 @@ export class RestApi extends Construct {
     );
 
     this.api = chatBotApi;
-    this.endpointAPIGateway = endpointAPIGateway;
   }
 }
