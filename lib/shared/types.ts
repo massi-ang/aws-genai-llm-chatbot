@@ -65,6 +65,7 @@ export interface SystemConfig {
   };
   certificate?: string;
   domain?: string;
+  privateWebsite?: boolean;
   bedrock?: {
     enabled?: boolean;
     region?: SupportedRegion;
