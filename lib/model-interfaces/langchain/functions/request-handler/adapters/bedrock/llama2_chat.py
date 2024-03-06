@@ -40,7 +40,10 @@ class BedrockMetaLLama2ChatAdapter(ModelAdapter):
         if "topP" in model_kwargs:
             params["top_p"] = model_kwargs["topP"]
         if "maxTokens" in model_kwargs:
-            params["max_gen_len"] = model_kwargs["maxTokens"]
+            if "meta" in self.model_id:
+                params["max_gen_len"] = model_kwargs["maxTokens"]
+            else:
+                params["max_tokens"] = model_kwargs["maxTokens"]
 
         return Bedrock(
             client=bedrock,
@@ -61,4 +64,7 @@ class BedrockMetaLLama2ChatAdapter(ModelAdapter):
 
 
 # Register the adapter
-registry.register(r"(?i)^bedrock.meta.llama2-.*-chat.*", BedrockMetaLLama2ChatAdapter)
+registry.register(
+    r"(^bedrock.meta.llama2-.*-chat.*|^bedrock.mistral.mi.*)",
+    BedrockMetaLLama2ChatAdapter,
+)
