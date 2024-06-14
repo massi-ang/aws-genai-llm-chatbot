@@ -1,9 +1,6 @@
 import os
 import boto3
 from botocore.exceptions import ClientError
-from aws_lambda_powertools import Logger
-
-logger = Logger()
 
 AWS_REGION = os.environ["AWS_REGION"]
 SESSIONS_TABLE_NAME = os.environ["SESSIONS_TABLE_NAME"]
@@ -20,28 +17,45 @@ def get_session(session_id, user_id):
         response = table.get_item(Key={"SessionId": session_id, "UserId": user_id})
     except ClientError as error:
         if error.response["Error"]["Code"] == "ResourceNotFoundException":
-            logger.warning("No record found with session id: %s", session_id)
+            print("No record found with session id: %s", session_id)
         else:
-            logger.error(error)
+            print(error)
 
     return response.get("Item", {})
 
 
 def list_sessions_by_user_id(user_id):
-    response = {}
+    items = []
     try:
-        response = table.query(
-            KeyConditionExpression="UserId = :user_id",
-            ExpressionAttributeValues={":user_id": user_id},
-            IndexName=SESSIONS_BY_USER_ID_INDEX_NAME,
-        )
+        last_evaluated_key = None
+        while True:
+            if last_evaluated_key:
+                response = table.query(
+                    KeyConditionExpression="UserId = :user_id",
+                    ExpressionAttributeValues={":user_id": user_id},
+                    IndexName=SESSIONS_BY_USER_ID_INDEX_NAME,
+                    ExclusiveStartKey=last_evaluated_key,
+                )
+            else:
+                response = table.query(
+                    KeyConditionExpression="UserId = :user_id",
+                    ExpressionAttributeValues={":user_id": user_id},
+                    IndexName=SESSIONS_BY_USER_ID_INDEX_NAME,
+                )
+
+            items.extend(response.get("Items", []))
+
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break
+
     except ClientError as error:
         if error.response["Error"]["Code"] == "ResourceNotFoundException":
-            logger.warning("No record found for user id: %s", user_id)
+            print("No record found for user id: %s", user_id)
         else:
-            logger.error(error)
+            print(error)
 
-    return response.get("Items", [])
+    return items
 
 
 def delete_session(session_id, user_id):
@@ -49,13 +63,13 @@ def delete_session(session_id, user_id):
         table.delete_item(Key={"SessionId": session_id, "UserId": user_id})
     except ClientError as error:
         if error.response["Error"]["Code"] == "ResourceNotFoundException":
-            logger.warning("No record found with session id: %s", session_id)
+            print("No record found with session id: %s", session_id)
         else:
-            logger.error(error)
+            print(error)
 
-        return {"deleted": False}
+        return {"id": session_id, "deleted": False}
 
-    return {"deleted": True}
+    return {"id": session_id, "deleted": True}
 
 
 def delete_user_sessions(user_id):

@@ -1,12 +1,12 @@
 import {
   Button,
-  Select,
-  SpaceBetween,
-  StatusIndicator,
-  SelectProps,
   Container,
-  Spinner,
   Icon,
+  Select,
+  SelectProps,
+  SpaceBetween,
+  Spinner,
+  StatusIndicator,
 } from "@cloudscape-design/components";
 import {
   Dispatch,
@@ -14,44 +14,55 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from "react";
-import useWebSocket, { ReadyState } from "react-use-websocket";
+import { useNavigate } from "react-router-dom";
 import SpeechRecognition, {
   useSpeechRecognition,
 } from "react-speech-recognition";
-import { Auth } from "aws-amplify";
+import TextareaAutosize from "react-textarea-autosize";
+import { ReadyState } from "react-use-websocket";
+import { ApiClient } from "../../common/api-client/api-client";
 import { AppContext } from "../../common/app-context";
+import { OptionsHelper } from "../../common/helpers/options-helper";
+import { StorageHelper } from "../../common/helpers/storage-helper";
+import { API } from "aws-amplify";
+import { GraphQLSubscription, GraphQLResult } from "@aws-amplify/api";
+import { Model, ReceiveMessagesSubscription, Workspace } from "../../API";
+import { LoadingStatus, ModelInterface } from "../../common/types";
+import styles from "../../styles/chat.module.scss";
+import ConfigDialog from "./config-dialog";
+import ImageDialog from "./image-dialog";
 import {
-  ChatBotConfiguration,
+  ChabotInputModality,
+  ChatBotHeartbeatRequest,
   ChatBotAction,
+  ChatBotConfiguration,
   ChatBotHistoryItem,
   ChatBotMessageResponse,
   ChatBotMessageType,
+  ChatBotMode,
   ChatBotRunRequest,
   ChatInputState,
+  ImageFile,
+  ChatBotModelInterface,
 } from "./types";
-import TextareaAutosize from "react-textarea-autosize";
-import { ApiClient } from "../../common/api-client/api-client";
+import { sendQuery } from "../../graphql/mutations";
 import {
-  ApiResult,
-  LLMItem,
-  ResultValue,
-  WorkspaceItem,
-} from "../../common/types";
-import { OptionsHelper } from "../../common/helpers/options-helper";
-import { useNavigate } from "react-router-dom";
-import ConfigDialog from "./config-dialog";
-import { StorageHelper } from "../../common/helpers/storage-helper";
-import styles from "../../styles/chat.module.scss";
-import { updateMessageHistory } from "./utils";
+  getSelectedModelMetadata,
+  getSignedUrl,
+  updateMessageHistoryRef,
+} from "./utils";
+import { receiveMessages } from "../../graphql/subscriptions";
+import { Utils } from "../../common/utils";
 
 export interface ChatInputPanelProps {
   running: boolean;
   setRunning: Dispatch<SetStateAction<boolean>>;
   session: { id: string; loading: boolean };
   messageHistory: ChatBotHistoryItem[];
-  setMessageHistory: Dispatch<SetStateAction<ChatBotHistoryItem[]>>;
+  setMessageHistory: (history: ChatBotHistoryItem[]) => void;
   configuration: ChatBotConfiguration;
   setConfiguration: Dispatch<React.SetStateAction<ChatBotConfiguration>>;
 }
@@ -83,33 +94,104 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   const [state, setState] = useState<ChatInputState>({
     value: "",
     selectedModel: null,
+    selectedModelMetadata: null,
     selectedWorkspace: workspaceDefaultOptions[0],
     modelsStatus: "loading",
     workspacesStatus: "loading",
   });
   const [configDialogVisible, setConfigDialogVisible] = useState(false);
-  const [socketUrl, setSocketUrl] = useState<string | null>(null);
-  const { sendJsonMessage, readyState } = useWebSocket(socketUrl, {
-    share: true,
-    shouldReconnect: () => true,
-    onMessage: (payload) => {
-      const response: ChatBotMessageResponse = JSON.parse(payload.data);
-      updateMessageHistory(
-        props.session.id,
-        props.messageHistory,
-        props.setMessageHistory,
-        response,
-        setState
-      );
+  const [imageDialogVisible, setImageDialogVisible] = useState(false);
+  const [files, setFiles] = useState<ImageFile[]>([]);
+  const [readyState, setReadyState] = useState<ReadyState>(
+    ReadyState.UNINSTANTIATED
+  );
 
-      if (
-        response.action === ChatBotAction.FinalResponse ||
-        response.action === ChatBotAction.Error
-      ) {
-        props.setRunning(false);
-      }
-    },
-  });
+  const messageHistoryRef = useRef<ChatBotHistoryItem[]>([]);
+
+  useEffect(() => {
+    messageHistoryRef.current = props.messageHistory;
+  }, [props.messageHistory]);
+
+  useEffect(() => {
+    async function subscribe() {
+      console.log("Subscribing to AppSync");
+      setReadyState(ReadyState.CONNECTING);
+      const sub = await API.graphql<
+        GraphQLSubscription<ReceiveMessagesSubscription>
+      >({
+        query: receiveMessages,
+        variables: {
+          sessionId: props.session.id,
+        },
+        authMode: "AMAZON_COGNITO_USER_POOLS",
+      }).subscribe({
+        next: ({ value }) => {
+          const data = value.data!.receiveMessages?.data;
+          if (data !== undefined && data !== null) {
+            const response: ChatBotMessageResponse = JSON.parse(data);
+            console.log("message data", response.data);
+            if (response.action === ChatBotAction.Heartbeat) {
+              console.log("Heartbeat pong!");
+              return;
+            }
+            updateMessageHistoryRef(
+              props.session.id,
+              messageHistoryRef.current,
+              response
+            );
+
+            if (
+              response.action === ChatBotAction.FinalResponse ||
+              response.action === ChatBotAction.Error
+            ) {
+              console.log("Final message received");
+              props.setRunning(false);
+            }
+            props.setMessageHistory([...messageHistoryRef.current]);
+          }
+        },
+        error: (error) => console.warn(error),
+      });
+      return sub;
+    }
+
+    const sub = subscribe();
+    sub
+      .then(() => {
+        setReadyState(ReadyState.OPEN);
+        console.log(`Subscribed to session ${props.session.id}`);
+        const request: ChatBotHeartbeatRequest = {
+          action: ChatBotAction.Heartbeat,
+          modelInterface: ChatBotModelInterface.Langchain,
+          data: {
+            sessionId: props.session.id,
+          },
+        };
+        const result = API.graphql({
+          query: sendQuery,
+          variables: {
+            data: JSON.stringify(request),
+          },
+        });
+        Promise.all([result])
+          .then((x) => console.log(`Query successful`, x))
+          .catch((err) => console.log(err));
+      })
+      .catch((err) => {
+        console.log(err);
+        setReadyState(ReadyState.CLOSED);
+      });
+
+    return () => {
+      sub
+        .then((s) => {
+          console.log(`Unsubscribing from ${props.session.id}`);
+          s.unsubscribe();
+        })
+        .catch((err) => console.log(err));
+    };
+    // eslint-disable-next-line
+  }, [props.session.id]);
 
   useEffect(() => {
     if (transcript) {
@@ -122,43 +204,51 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
 
     (async () => {
       const apiClient = new ApiClient(appContext);
-      const [session, llmsResult, workspacesResult] = await Promise.all([
-        Auth.currentSession(),
-        apiClient.llms.getModels(),
-        appContext?.config.rag_enabled
-          ? apiClient.workspaces.getWorkspaces()
-          : Promise.resolve<ApiResult<WorkspaceItem[]>>({ ok: true, data: [] }),
-      ]);
+      let workspaces: Workspace[] = [];
+      let workspacesStatus: LoadingStatus = "finished";
+      let modelsResult: GraphQLResult<any>;
+      let workspacesResult: GraphQLResult<any>;
+      try {
+        if (appContext?.config.rag_enabled) {
+          [modelsResult, workspacesResult] = await Promise.all([
+            apiClient.models.getModels(),
+            apiClient.workspaces.getWorkspaces(),
+          ]);
+          workspaces = workspacesResult.data?.listWorkspaces;
+          workspacesStatus =
+            workspacesResult.errors === undefined ? "finished" : "error";
+        } else {
+          modelsResult = await apiClient.models.getModels();
+        }
 
-      const jwtToken = session.getAccessToken().getJwtToken();
+        const models = modelsResult.data ? modelsResult.data.listModels : [];
 
-      if (jwtToken) {
-        setSocketUrl(
-          `${appContext.config.websocket_endpoint}?token=${jwtToken}`
+        const selectedModelOption = getSelectedModelOption(models);
+        const selectedModelMetadata = getSelectedModelMetadata(
+          models,
+          selectedModelOption
         );
+        const selectedWorkspaceOption = appContext?.config.rag_enabled
+          ? getSelectedWorkspaceOption(workspaces)
+          : workspaceDefaultOptions[0];
+
+        setState((state) => ({
+          ...state,
+          models,
+          workspaces,
+          selectedModel: selectedModelOption,
+          selectedModelMetadata,
+          selectedWorkspace: selectedWorkspaceOption,
+          modelsStatus: "finished",
+          workspacesStatus: workspacesStatus,
+        }));
+      } catch (error) {
+        console.log(Utils.getErrorMessage(error));
+        setState((state) => ({
+          ...state,
+          modelsStatus: "error",
+        }));
       }
-
-      const models = ResultValue.ok(llmsResult) ? llmsResult.data : [];
-      const workspaces = ResultValue.ok(workspacesResult)
-        ? workspacesResult.data
-        : [];
-
-      const selectedModelOption = getSelectedModelOption(models);
-      const selectedWorkspaceOption = appContext?.config.rag_enabled
-        ? getSelectedWorkspaceOption(workspaces)
-        : workspaceDefaultOptions[0];
-
-      setState((state) => ({
-        ...state,
-        models,
-        workspaces,
-        selectedModel: selectedModelOption,
-        selectedWorkspace: selectedWorkspaceOption,
-        modelsStatus: ResultValue.ok(llmsResult) ? "finished" : "error",
-        workspacesStatus: ResultValue.ok(workspacesResult)
-          ? "finished"
-          : "error",
-      }));
     })();
   }, [appContext, state.modelsStatus]);
 
@@ -205,6 +295,38 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     }
   }, [props.messageHistory]);
 
+  useEffect(() => {
+    const getSignedUrls = async () => {
+      if (props.configuration?.files as ImageFile[]) {
+        const files: ImageFile[] = [];
+        for await (const file of props.configuration?.files ?? []) {
+          const signedUrl = await getSignedUrl(file.key);
+          files.push({
+            ...file,
+            url: signedUrl,
+          });
+        }
+
+        setFiles(files);
+      }
+    };
+
+    if (props.configuration.files?.length) {
+      getSignedUrls();
+    }
+  }, [props.configuration]);
+
+  const hasImagesInChatHistory = function (): boolean {
+    return (
+      messageHistoryRef.current.filter(
+        (x) =>
+          x.type == ChatBotMessageType.Human &&
+          x.metadata?.files &&
+          (x.metadata.files as object[]).length > 0
+      ).length > 0
+    );
+  };
+
   const handleSendMessage = () => {
     if (!state.selectedModel) return;
     if (props.running) return;
@@ -218,7 +340,18 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     const value = state.value.trim();
     const request: ChatBotRunRequest = {
       action: ChatBotAction.Run,
+      modelInterface:
+        (props.configuration.files && props.configuration.files.length > 0) ||
+        (hasImagesInChatHistory() &&
+          state.selectedModelMetadata?.inputModalities.includes(
+            ChabotInputModality.Image
+          ))
+          ? "multimodal"
+          : (state.selectedModelMetadata!.interface as ModelInterface),
       data: {
+        mode: ChatBotMode.Chain,
+        text: value,
+        files: props.configuration.files ?? [],
         modelName: name,
         provider: provider,
         sessionId: props.session.id,
@@ -229,34 +362,48 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
           temperature: props.configuration.temperature,
           topP: props.configuration.topP,
         },
-        text: value,
-        mode: "chain",
       },
     };
-
+    console.log(request);
     setState((state) => ({
       ...state,
       value: "",
     }));
+    setFiles([]);
+
+    props.setConfiguration({
+      ...props.configuration,
+      files: [],
+    });
 
     props.setRunning(true);
+    messageHistoryRef.current = [
+      ...messageHistoryRef.current,
 
-    props.setMessageHistory((prev) =>
-      prev.concat(
-        {
-          type: ChatBotMessageType.Human,
-          content: value,
-          metadata: {},
+      {
+        type: ChatBotMessageType.Human,
+        content: value,
+        metadata: {
+          ...props.configuration,
         },
-        {
-          type: ChatBotMessageType.AI,
-          content: "",
-          metadata: {},
-        }
-      )
-    );
+        tokens: [],
+      },
+      {
+        type: ChatBotMessageType.AI,
+        tokens: [],
+        content: "",
+        metadata: {},
+      },
+    ];
 
-    return sendJsonMessage(request);
+    props.setMessageHistory(messageHistoryRef.current);
+
+    API.graphql({
+      query: sendQuery,
+      variables: {
+        data: JSON.stringify(request),
+      },
+    });
   };
 
   const connectionStatus = {
@@ -267,18 +414,18 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
     [ReadyState.UNINSTANTIATED]: "Uninstantiated",
   }[readyState];
 
-  const llmsOptions = OptionsHelper.getSelectOptionGroups(state.models || []);
+  const modelsOptions = OptionsHelper.getSelectOptionGroups(state.models ?? []);
 
   const workspaceOptions = [
     ...workspaceDefaultOptions,
-    ...OptionsHelper.getSelectOptions(state.workspaces || []),
+    ...OptionsHelper.getSelectOptions(state.workspaces ?? []),
   ];
 
   return (
     <SpaceBetween direction="vertical" size="l">
       <Container>
         <div className={styles.input_textarea_container}>
-          <span>
+          <SpaceBetween size="xxs" direction="horizontal" alignItems="center">
             {browserSupportsSpeechRecognition ? (
               <Button
                 iconName={listening ? "microphone-off" : "microphone"}
@@ -292,14 +439,40 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
             ) : (
               <Icon name="microphone-off" variant="disabled" />
             )}
-          </span>
-
+            {state.selectedModelMetadata?.inputModalities.includes(
+              ChabotInputModality.Image
+            ) && (
+              <Button
+                variant="icon"
+                onClick={() => setImageDialogVisible(true)}
+                iconSvg={
+                  <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+                    <rect
+                      x="2"
+                      y="2"
+                      width="19"
+                      height="19"
+                      rx="2"
+                      ry="2"
+                    ></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                  </svg>
+                }
+              ></Button>
+            )}
+          </SpaceBetween>
+          <ImageDialog
+            sessionId={props.session.id}
+            visible={imageDialogVisible}
+            setVisible={setImageDialogVisible}
+            configuration={props.configuration}
+            setConfiguration={props.setConfiguration}
+          />
           <TextareaAutosize
             className={styles.input_textarea}
-            style={{ width: "100%" }}
             maxRows={6}
             minRows={1}
-            maxLength={10000}
             spellCheck={true}
             autoFocus
             onChange={(e) =>
@@ -315,6 +488,24 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
             placeholder={listening ? "Listening..." : "Send a message"}
           />
           <div style={{ marginLeft: "8px" }}>
+            {state.selectedModelMetadata?.inputModalities.includes(
+              ChabotInputModality.Image
+            ) &&
+              files.length > 0 &&
+              files.map((file, idx) => (
+                <img
+                  key={idx}
+                  onClick={() => setImageDialogVisible(true)}
+                  src={file.url}
+                  style={{
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    maxHeight: "30px",
+                    float: "left",
+                    marginRight: "8px",
+                  }}
+                />
+              ))}
             <Button
               disabled={
                 readyState !== ReadyState.OPEN ||
@@ -367,16 +558,22 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
               setState((state) => ({
                 ...state,
                 selectedModel: detail.selectedOption,
+                selectedModelMetadata: getSelectedModelMetadata(
+                  state.models,
+                  detail.selectedOption
+                ),
               }));
               if (detail.selectedOption?.value) {
                 StorageHelper.setSelectedLLM(detail.selectedOption.value);
               }
             }}
-            options={llmsOptions}
+            options={modelsOptions}
           />
-          {appContext?.config.rag_enabled && true && (
+          {appContext?.config.rag_enabled && (
             <Select
-              disabled={props.running}
+              disabled={
+                props.running || !state.selectedModelMetadata?.ragSupported
+              }
               loadingText="Loading workspaces (might take few seconds)..."
               statusType={state.workspacesStatus}
               placeholder="Select a workspace (RAG data source)"
@@ -437,7 +634,7 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
 }
 
 function getSelectedWorkspaceOption(
-  workspaces: WorkspaceItem[]
+  workspaces: Workspace[]
 ): SelectProps.Option | null {
   let selectedWorkspaceOption: SelectProps.Option | null = null;
 
@@ -459,7 +656,7 @@ function getSelectedWorkspaceOption(
   return selectedWorkspaceOption;
 }
 
-function getSelectedModelOption(models: LLMItem[]): SelectProps.Option | null {
+function getSelectedModelOption(models: Model[]): SelectProps.Option | null {
   let selectedModelOption: SelectProps.Option | null = null;
   const savedModel = StorageHelper.getSelectedLLM();
 
@@ -478,7 +675,7 @@ function getSelectedModelOption(models: LLMItem[]): SelectProps.Option | null {
     }
   }
 
-  let candidate: LLMItem | undefined = undefined;
+  let candidate: Model | undefined = undefined;
   if (!selectedModelOption) {
     const bedrockModels = models.filter((m) => m.provider === "bedrock");
     const sageMakerModels = models.filter((m) => m.provider === "sagemaker");

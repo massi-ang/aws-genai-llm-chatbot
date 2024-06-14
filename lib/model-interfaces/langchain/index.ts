@@ -1,16 +1,18 @@
-import * as path from "path";
 import * as cdk from "aws-cdk-lib";
-import { CfnEndpoint } from "aws-cdk-lib/aws-sagemaker";
-import { Construct } from "constructs";
-import { Shared } from "../../shared";
-import { SystemConfig } from "../../shared/types";
-import { RagEngines } from "../../rag-engines";
-import * as sns from "aws-cdk-lib/aws-sns";
-import * as sqs from "aws-cdk-lib/aws-sqs";
-import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as logs from "aws-cdk-lib/aws-logs";
+import { CfnEndpoint } from "aws-cdk-lib/aws-sagemaker";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import { Construct } from "constructs";
+import * as path from "path";
+import { RagEngines } from "../../rag-engines";
+import { Shared } from "../../shared";
+import { SystemConfig } from "../../shared/types";
+import { NagSuppressions } from "cdk-nag";
 
 interface LangChainInterfaceProps {
   readonly shared: Shared;
@@ -30,7 +32,7 @@ export class LangChainInterface extends Construct {
 
     const requestHandler = new lambda.Function(this, "RequestHandler", {
       vpc: props.shared.vpc,
-      code: lambda.Code.fromAsset(
+      code: props.shared.sharedCode.bundleWithLambdaAsset(
         path.join(__dirname, "./functions/request-handler")
       ),
       handler: "index.handler",
@@ -39,11 +41,8 @@ export class LangChainInterface extends Construct {
       tracing: lambda.Tracing.ACTIVE,
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
-      layers: [
-        props.shared.powerToolsLayer,
-        props.shared.commonLayer.layer,
-        props.shared.pythonSDKLayer,
-      ],
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
       environment: {
         ...props.shared.defaultEnvironmentVariables,
         CONFIG_PARAMETER_NAME: props.shared.configParameter.parameterName,
@@ -58,7 +57,8 @@ export class LangChainInterface extends Construct {
         AURORA_DB_SECRET_ID: props.ragEngines?.auroraPgVector?.database?.secret
           ?.secretArn as string,
         SAGEMAKER_RAG_MODELS_ENDPOINT:
-          props.ragEngines?.sageMakerRagModelsEndpoint?.attrEndpointName ?? "",
+          props.ragEngines?.sageMakerRagModels?.model.endpoint
+            ?.attrEndpointName ?? "",
         OPEN_SEARCH_COLLECTION_ENDPOINT:
           props.ragEngines?.openSearchVector?.openSearchCollectionEndpoint ??
           "",
@@ -124,11 +124,13 @@ export class LangChainInterface extends Construct {
     if (props.ragEngines) {
       props.ragEngines.workspacesTable.grantReadWriteData(requestHandler);
       props.ragEngines.documentsTable.grantReadWriteData(requestHandler);
+    }
 
+    if (props.ragEngines?.sageMakerRagModels) {
       requestHandler.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ["sagemaker:InvokeEndpoint"],
-          resources: [props.ragEngines?.sageMakerRagModelsEndpoint.ref],
+          resources: [props.ragEngines.sageMakerRagModels.model.endpoint.ref],
         })
       );
     }
@@ -148,14 +150,25 @@ export class LangChainInterface extends Construct {
       }
 
       for (const item of props.config.rag.engines.kendra.external || []) {
-        if (!item.roleArn) continue;
-
-        requestHandler.addToRolePolicy(
-          new iam.PolicyStatement({
-            actions: ["sts:AssumeRole"],
-            resources: [item.roleArn],
-          })
-        );
+        if (item.roleArn) {
+          requestHandler.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: ["sts:AssumeRole"],
+              resources: [item.roleArn],
+            })
+          );
+        } else {
+          requestHandler.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: ["kendra:Retrieve", "kendra:Query"],
+              resources: [
+                `arn:${cdk.Aws.PARTITION}:kendra:${
+                  item.region ?? cdk.Aws.REGION
+                }:${cdk.Aws.ACCOUNT_ID}:index/${item.kendraId}`,
+              ],
+            })
+          );
+        }
       }
     }
 
@@ -182,8 +195,11 @@ export class LangChainInterface extends Construct {
       })
     );
 
-    const deadLetterQueue = new sqs.Queue(this, "GenericModelDLQ");
-    const queue = new sqs.Queue(this, "GenericModelQueue", {
+    const deadLetterQueue = new sqs.Queue(this, "DLQ", {
+      enforceSSL: true,
+    });
+
+    const queue = new sqs.Queue(this, "Queue", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       // https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#events-sqs-queueconfig
       visibilityTimeout: cdk.Duration.minutes(15 * 6),
@@ -191,6 +207,7 @@ export class LangChainInterface extends Construct {
         queue: deadLetterQueue,
         maxReceiveCount: 3,
       },
+      enforceSSL: true,
     });
 
     queue.addToResourcePolicy(

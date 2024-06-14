@@ -139,7 +139,7 @@ export default function ConfigDialog(props: ConfigDialogProps) {
             <Input
               type="number"
               step={0.05}
-              value={data.temperature.toString()}
+              value={data.temperature.toFixed(2)}
               onChange={({ detail: { value } }) => {
                 let floatVal = parseFloat(value);
                 floatVal = Math.min(1.0, Math.max(0.0, floatVal));
@@ -155,8 +155,8 @@ export default function ConfigDialog(props: ConfigDialogProps) {
           >
             <Input
               type="number"
-              step={0.9}
-              value={data.topP.toString()}
+              step={0.1}
+              value={data.topP.toFixed(2)}
               onChange={({ detail: { value } }) => {
                 let floatVal = parseFloat(value);
                 floatVal = Math.min(1.0, Math.max(0.0, floatVal));

@@ -1,33 +1,53 @@
-import { ApiResult, WorkspaceItem } from "../types";
-import { ApiClientBase } from "./api-client-base";
+import { API } from "aws-amplify";
+import { GraphQLQuery, GraphQLResult } from "@aws-amplify/api";
+import { listWorkspaces, getWorkspace } from "../../graphql/queries";
+import {
+  createAuroraWorkspace,
+  createKendraWorkspace,
+  createOpenSearchWorkspace,
+  deleteWorkspace,
+} from "../../graphql/mutations";
+import {
+  ListWorkspacesQuery,
+  GetWorkspaceQuery,
+  CreateAuroraWorkspaceMutation,
+  CreateKendraWorkspaceMutation,
+  CreateOpenSearchWorkspaceMutation,
+  DeleteWorkspaceMutation,
+} from "../../API";
 
-export class WorkspacesClient extends ApiClientBase {
-  async getWorkspaces(): Promise<ApiResult<WorkspaceItem[]>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl("/workspaces"), {
-        headers,
-      });
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+export class WorkspacesClient {
+  async getWorkspaces(): Promise<
+    GraphQLResult<GraphQLQuery<ListWorkspacesQuery>>
+  > {
+    const result = await API.graphql<GraphQLQuery<ListWorkspacesQuery>>({
+      query: listWorkspaces,
+    });
+    return result;
   }
 
   async getWorkspace(
     workspaceId: string
-  ): Promise<ApiResult<WorkspaceItem | null>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl(`/workspaces/${workspaceId}`), {
-        headers,
-      });
+  ): Promise<GraphQLResult<GraphQLQuery<GetWorkspaceQuery>>> {
+    const result = await API.graphql<GraphQLQuery<GetWorkspaceQuery>>({
+      query: getWorkspace,
+      variables: {
+        workspaceId: workspaceId,
+      },
+    });
+    return result;
+  }
 
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+  async deleteWorkspace(
+    workspaceId: string
+  ): Promise<GraphQLResult<GraphQLQuery<DeleteWorkspaceMutation>>> {
+    const result = await API.graphql<GraphQLQuery<DeleteWorkspaceMutation>>({
+      query: deleteWorkspace,
+      variables: {
+        workspaceId: workspaceId,
+      },
+    });
+    return result;
   }
 
   async createAuroraWorkspace(params: {
@@ -40,25 +60,17 @@ export class WorkspacesClient extends ApiClientBase {
     metric: string;
     index: boolean;
     hybridSearch: boolean;
-    chunking_strategy: string;
+    chunkingStrategy: string;
     chunkSize: number;
     chunkOverlap: number;
-  }): Promise<ApiResult<{ id: string }>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl("/workspaces"), {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({
-          ...params,
-          kind: "aurora",
-        }),
-      });
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+  }): Promise<GraphQLResult<GraphQLQuery<CreateAuroraWorkspaceMutation>>> {
+    const result = API.graphql<GraphQLQuery<CreateAuroraWorkspaceMutation>>({
+      query: createAuroraWorkspace,
+      variables: {
+        input: { ...params, kind: "aurora" },
+      },
+    });
+    return result;
   }
 
   async createOpenSearchWorkspace(params: {
@@ -69,45 +81,32 @@ export class WorkspacesClient extends ApiClientBase {
     crossEncoderModelName: string;
     languages: string[];
     hybridSearch: boolean;
-    chunking_strategy: string;
+    chunkingStrategy: string;
     chunkSize: number;
     chunkOverlap: number;
-  }): Promise<ApiResult<{ id: string }>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl("/workspaces"), {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({
-          ...params,
-          kind: "opensearch",
-        }),
-      });
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+  }): Promise<GraphQLResult<GraphQLQuery<CreateOpenSearchWorkspaceMutation>>> {
+    const result = API.graphql<GraphQLQuery<CreateOpenSearchWorkspaceMutation>>(
+      {
+        query: createOpenSearchWorkspace,
+        variables: {
+          input: { ...params, kind: "aoss" },
+        },
+      }
+    );
+    return result;
   }
 
   async createKendraWorkspace(params: {
     name: string;
     kendraIndexId: string;
-  }): Promise<ApiResult<{ id: string }>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl("/workspaces"), {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({
-          ...params,
-          kind: "kendra",
-        }),
-      });
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+    useAllData: boolean;
+  }): Promise<GraphQLResult<GraphQLQuery<CreateKendraWorkspaceMutation>>> {
+    const result = API.graphql<GraphQLQuery<CreateKendraWorkspaceMutation>>({
+      query: createKendraWorkspace,
+      variables: {
+        input: { ...params, kind: "kendra" },
+      },
+    });
+    return result;
   }
 }

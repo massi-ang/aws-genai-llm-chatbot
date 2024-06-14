@@ -1,15 +1,15 @@
 import os
 import uuid
 import boto3
-import genai_core.types
 import genai_core.documents
 import genai_core.embeddings
 import genai_core.aurora.chunks
 import genai_core.opensearch.chunks
+from genai_core.types import CommonError,Task
 from typing import List, Optional
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-PROCESSING_BUCKET_NAME = os.environ["PROCESSING_BUCKET_NAME"]
+PROCESSING_BUCKET_NAME = os.environ.get("PROCESSING_BUCKET_NAME", "")
 s3 = boto3.resource("s3")
 
 
@@ -37,10 +37,10 @@ def add_chunks(
     )
 
     if embeddings_model is None:
-        raise genai_core.types.CommonError("Embeddings model not found")
+        raise CommonError("Embeddings model not found")
 
     chunk_embeddings = genai_core.embeddings.generate_embeddings(
-        embeddings_model, chunks
+        embeddings_model, chunks, Task.STORE.value
     )
     chunk_ids = [uuid.uuid4() for _ in chunks]
 
@@ -77,7 +77,7 @@ def add_chunks(
             replace=replace,
         )
     else:
-        raise genai_core.types.CommonError("Engine not supported")
+        raise CommonError("Engine not supported")
 
     added_vectors = result["added_vectors"]
     genai_core.documents.set_document_vectors(
@@ -96,10 +96,11 @@ def split_content(workspace: dict, content: str):
         )
 
         text_data = text_splitter.split_text(content)
+        text_data = [text.replace("\x00", "\uFFFD") for text in text_data]
 
         return text_data
 
-    raise genai_core.types.CommonError("Chunking strategy not supported")
+    raise CommonError("Chunking strategy not supported")
 
 
 def store_chunks_on_s3(

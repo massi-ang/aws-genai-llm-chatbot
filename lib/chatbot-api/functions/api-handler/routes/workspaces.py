@@ -5,7 +5,7 @@ import genai_core.parameters
 import genai_core.workspaces
 from pydantic import BaseModel
 from aws_lambda_powertools import Logger, Tracer
-from aws_lambda_powertools.event_handler.api_gateway import Router
+from aws_lambda_powertools.event_handler.appsync import Router
 
 tracer = Tracer()
 router = Router()
@@ -29,7 +29,7 @@ class CreateWorkspaceAuroraRequest(BaseModel):
     metric: str
     index: bool
     hybridSearch: bool
-    chunking_strategy: str
+    chunkingStrategy: str
     chunkSize: int
     chunkOverlap: int
 
@@ -43,7 +43,7 @@ class CreateWorkspaceOpenSearchRequest(BaseModel):
     crossEncoderModelName: str
     languages: list[str]
     hybridSearch: bool
-    chunking_strategy: str
+    chunkingStrategy: str
     chunkSize: int
     chunkOverlap: int
 
@@ -52,51 +52,67 @@ class CreateWorkspaceKendraRequest(BaseModel):
     kind: str
     name: str
     kendraIndexId: str
+    useAllData: bool
 
 
-@router.get("/workspaces")
+@router.resolver(field_name="listWorkspaces")
 @tracer.capture_method
-def workspaces():
+def list_workspaces():
     workspaces = genai_core.workspaces.list_workspaces()
 
     ret_value = [_convert_workspace(workspace) for workspace in workspaces]
 
-    return {"ok": True, "data": ret_value}
+    return ret_value
 
 
-@router.get("/workspaces/<workspace_id>")
+@router.resolver(field_name="getWorkspace")
 @tracer.capture_method
-def workspace(workspace_id: str):
-    workspace = genai_core.workspaces.get_workspace(workspace_id)
+def get_workspace(workspaceId: str):
+    workspace = genai_core.workspaces.get_workspace(workspaceId)
 
     if not workspace:
-        return {"ok": True, "data": None}
+        return None
 
     ret_value = _convert_workspace(workspace)
 
-    return {"ok": True, "data": ret_value}
+    return ret_value
 
 
-@router.put("/workspaces")
+@router.resolver(field_name="deleteWorkspace")
 @tracer.capture_method
-def create_workspace():
-    data: dict = router.current_event.json_body
-    generic_request = GenericCreateWorkspaceRequest(**data)
+def delete_workspace(workspaceId: str):
+    genai_core.workspaces.delete_workspace(workspaceId)
+
+
+@router.resolver(field_name="createAuroraWorkspace")
+@tracer.capture_method
+def create_aurora_workspace(input: dict):
     config = genai_core.parameters.get_config()
 
-    if generic_request.kind == "aurora":
-        request = CreateWorkspaceAuroraRequest(**data)
-        ret_value = _create_workspace_aurora(request, config)
-    elif generic_request.kind == "opensearch":
-        request = CreateWorkspaceOpenSearchRequest(**data)
-        ret_value = _create_workspace_open_search(request, config)
-    elif generic_request.kind == "kendra":
-        request = CreateWorkspaceKendraRequest(**data)
-        ret_value = _create_workspace_kendra(request, config)
-    else:
-        raise genai_core.types.CommonError("Invalid engine")
+    request = CreateWorkspaceAuroraRequest(**input)
+    ret_value = _create_workspace_aurora(request, config)
 
-    return {"ok": True, "data": ret_value}
+    return ret_value
+
+
+@router.resolver(field_name="createOpenSearchWorkspace")
+@tracer.capture_method
+def create_open_search_workspace(input: dict):
+    config = genai_core.parameters.get_config()
+
+    request = CreateWorkspaceOpenSearchRequest(**input)
+    ret_value = _create_workspace_open_search(request, config)
+    return ret_value
+
+
+@router.resolver(field_name="createKendraWorkspace")
+@tracer.capture_method
+def create_kendra_workspace(input: dict):
+    config = genai_core.parameters.get_config()
+
+    request = CreateWorkspaceKendraRequest(**input)
+    ret_value = _create_workspace_kendra(request, config)
+    return ret_value
 
 
 def _create_workspace_aurora(request: CreateWorkspaceAuroraRequest, config: dict):
@@ -145,7 +161,7 @@ def _create_workspace_aurora(request: CreateWorkspaceAuroraRequest, config: dict
     if request.metric not in ["inner", "cosine", "l2"]:
         raise genai_core.types.CommonError("Invalid metric")
 
-    if request.chunking_strategy not in ["recursive"]:
+    if request.chunkingStrategy not in ["recursive"]:
         raise genai_core.types.CommonError("Invalid chunking strategy")
 
     if request.chunkSize < 100 or request.chunkSize > 10000:
@@ -154,20 +170,22 @@ def _create_workspace_aurora(request: CreateWorkspaceAuroraRequest, config: dict
     if request.chunkOverlap < 0 or request.chunkOverlap >= request.chunkSize:
         raise genai_core.types.CommonError("Invalid chunk overlap")
 
-    return genai_core.workspaces.create_workspace_aurora(
-        workspace_name=workspace_name,
-        embeddings_model_provider=request.embeddingsModelProvider,
-        embeddings_model_name=request.embeddingsModelName,
-        embeddings_model_dimensions=embeddings_model_dimensions,
-        cross_encoder_model_provider=request.crossEncoderModelProvider,
-        cross_encoder_model_name=request.crossEncoderModelName,
-        languages=request.languages,
-        metric=request.metric,
-        has_index=request.index,
-        hybrid_search=request.hybridSearch,
-        chunking_strategy=request.chunking_strategy,
-        chunk_size=request.chunkSize,
-        chunk_overlap=request.chunkOverlap,
+    return _convert_workspace(
+        genai_core.workspaces.create_workspace_aurora(
+            workspace_name=workspace_name,
+            embeddings_model_provider=request.embeddingsModelProvider,
+            embeddings_model_name=request.embeddingsModelName,
+            embeddings_model_dimensions=embeddings_model_dimensions,
+            cross_encoder_model_provider=request.crossEncoderModelProvider,
+            cross_encoder_model_name=request.crossEncoderModelName,
+            languages=request.languages,
+            metric=request.metric,
+            has_index=request.index,
+            hybrid_search=request.hybridSearch,
+            chunking_strategy=request.chunkingStrategy,
+            chunk_size=request.chunkSize,
+            chunk_overlap=request.chunkOverlap,
+        )
     )
 
 
@@ -216,7 +234,7 @@ def _create_workspace_open_search(
     if len(request.languages) == 0 or len(request.languages) > 3:
         raise genai_core.types.CommonError("Invalid languages")
 
-    if request.chunking_strategy not in ["recursive"]:
+    if request.chunkingStrategy not in ["recursive"]:
         raise genai_core.types.CommonError("Invalid chunking strategy")
 
     if request.chunkSize < 100 or request.chunkSize > 10000:
@@ -225,18 +243,20 @@ def _create_workspace_open_search(
     if request.chunkOverlap < 0 or request.chunkOverlap >= request.chunkSize:
         raise genai_core.types.CommonError("Invalid chunk overlap")
 
-    return genai_core.workspaces.create_workspace_open_search(
-        workspace_name=workspace_name,
-        embeddings_model_provider=request.embeddingsModelProvider,
-        embeddings_model_name=request.embeddingsModelName,
-        embeddings_model_dimensions=embeddings_model_dimensions,
-        cross_encoder_model_provider=request.crossEncoderModelProvider,
-        cross_encoder_model_name=request.crossEncoderModelName,
-        languages=request.languages,
-        hybrid_search=request.hybridSearch,
-        chunking_strategy=request.chunking_strategy,
-        chunk_size=request.chunkSize,
-        chunk_overlap=request.chunkOverlap,
+    return _convert_workspace(
+        genai_core.workspaces.create_workspace_open_search(
+            workspace_name=workspace_name,
+            embeddings_model_provider=request.embeddingsModelProvider,
+            embeddings_model_name=request.embeddingsModelName,
+            embeddings_model_dimensions=embeddings_model_dimensions,
+            cross_encoder_model_provider=request.crossEncoderModelProvider,
+            cross_encoder_model_name=request.crossEncoderModelName,
+            languages=request.languages,
+            hybrid_search=request.hybridSearch,
+            chunking_strategy=request.chunkingStrategy,
+            chunk_size=request.chunkSize,
+            chunk_overlap=request.chunkOverlap,
+        )
     )
 
 
@@ -262,12 +282,18 @@ def _create_workspace_kendra(request: CreateWorkspaceKendraRequest, config: dict
     if kendra_index is None:
         raise genai_core.types.CommonError("Kendra index not found")
 
-    return genai_core.workspaces.create_workspace_kendra(
-        workspace_name=workspace_name, kendra_index=kendra_index
+    return _convert_workspace(
+        genai_core.workspaces.create_workspace_kendra(
+            workspace_name=workspace_name,
+            kendra_index=kendra_index,
+            use_all_data=request.useAllData,
+        )
     )
 
 
 def _convert_workspace(workspace: dict):
+    kendra_index_external = workspace.get("kendra_index_external")
+
     return {
         "id": workspace["workspace_id"],
         "name": workspace["name"],
@@ -285,11 +311,15 @@ def _convert_workspace(workspace: dict):
         "chunkingStrategy": workspace.get("chunking_strategy"),
         "chunkSize": workspace.get("chunk_size"),
         "chunkOverlap": workspace.get("chunk_overlap"),
-        "vectors": workspace.get("vectors"),
-        "documents": workspace.get("documents"),
+        "vectors": workspace.get("vectors", 0),
+        "documents": workspace.get("documents", 0),
+        "aossEngine": workspace.get("aoss_engine"),
+        "hasIndex": workspace.get("has_index"),
+        "formatVersion": workspace.get("format_version"),
         "sizeInBytes": workspace.get("size_in_bytes"),
         "kendraIndexId": workspace.get("kendra_index_id"),
-        "kendraIndexExternal": workspace.get("kendra_index_external"),
+        "kendraIndexExternal": kendra_index_external,
+        "kendraUseAllData": workspace.get("kendra_use_all_data", kendra_index_external),
         "createdAt": workspace.get("created_at"),
         "updatedAt": workspace.get("updated_at"),
     }

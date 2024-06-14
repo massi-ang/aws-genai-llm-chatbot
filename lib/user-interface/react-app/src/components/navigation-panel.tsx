@@ -6,6 +6,7 @@ import useOnFollow from "../common/hooks/use-on-follow";
 import { useNavigationPanelState } from "../common/hooks/use-navigation-panel-state";
 import { AppContext } from "../common/app-context";
 import { useContext, useState } from "react";
+import { CHATBOT_NAME } from "../common/constants";
 
 export default function NavigationPanel() {
   const appContext = useContext(AppContext);
@@ -26,7 +27,17 @@ export default function NavigationPanel() {
           { type: "link", text: "Playground", href: "/chatbot/playground" },
           {
             type: "link",
-            text: "Large Language Models (LLMs)",
+            text: "Multi-chat playground",
+            href: "/chatbot/multichat",
+          },
+          {
+            type: "link",
+            text: "Sessions",
+            href: "/chatbot/sessions",
+          },
+          {
+            type: "link",
+            text: "Models",
             href: "/chatbot/models",
           },
         ],
@@ -34,6 +45,17 @@ export default function NavigationPanel() {
     ];
 
     if (appContext?.config.rag_enabled) {
+      const crossEncodersItems: SideNavigationProps.Item[] = appContext?.config
+        .cross_encoders_enabled
+        ? [
+            {
+              type: "link",
+              text: "Cross-encoders",
+              href: "/rag/cross-encoders",
+            },
+          ]
+        : [];
+
       items.push({
         type: "section",
         text: "Retrieval-Augmented Generation (RAG)",
@@ -50,11 +72,7 @@ export default function NavigationPanel() {
             text: "Embeddings",
             href: "/rag/embeddings",
           },
-          {
-            type: "link",
-            text: "Cross-encoders",
-            href: "/rag/cross-encoders",
-          },
+          ...crossEncodersItems,
           { type: "link", text: "Engines", href: "/rag/engines" },
         ],
       });
@@ -65,7 +83,7 @@ export default function NavigationPanel() {
       {
         type: "link",
         text: "Documentation",
-        href: "https://github.com/aws-samples/aws-genai-llm-chatbot",
+        href: "https://aws-samples.github.io/aws-genai-llm-chatbot/",
         external: true,
       }
     );
@@ -91,7 +109,7 @@ export default function NavigationPanel() {
     <SideNavigation
       onFollow={onFollow}
       onChange={onChange}
-      header={{ href: "/", text: "AWS GenAI Chatbot" }}
+      header={{ href: "/", text: CHATBOT_NAME }}
       items={items.map((value, idx) => {
         if (value.type === "section") {
           const collapsed =

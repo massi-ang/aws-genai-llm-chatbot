@@ -8,44 +8,52 @@ import {
   FormField,
   Header,
   Link,
-  Select,
   SelectProps,
   SpaceBetween,
   StatusIndicator,
+  ExpandableSection,
   Textarea,
+  Multiselect,
+  Toggle,
+  Popover,
+  HelpPanel,
 } from "@cloudscape-design/components";
 import BaseAppLayout from "../../../components/base-app-layout";
 import { useContext, useEffect, useState } from "react";
 import { ApiClient } from "../../../common/api-client/api-client";
 import { AppContext } from "../../../common/app-context";
-import {
-  EmbeddingsModelItem,
-  LoadingStatus,
-  ResultValue,
-} from "../../../common/types";
+import { LoadingStatus } from "../../../common/types";
 import { useForm } from "../../../common/hooks/use-form";
 import { MetricsHelper } from "../../../common/helpers/metrics-helper";
 import { MetricsMatrix } from "./metrics-matrix";
 import { EmbeddingsModelHelper } from "../../../common/helpers/embeddings-model-helper";
 import { Utils } from "../../../common/utils";
+import { CHATBOT_NAME } from "../../../common/constants";
+import { Embedding, EmbeddingModel } from "../../../API";
 
 export default function Embeddings() {
   const onFollow = useOnFollow();
   const appContext = useContext(AppContext);
   const [globalError, setGlobalError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
-  const [embeddingsModelsStatus, setEmbeddingsModelsStatus] =
+  const [pinFirstInput, setPinFirstInput] = useState(false);
+  const [embeddingsModelStatus, setEmbeddingsModelsStatus] =
     useState<LoadingStatus>("loading");
-  const [embeddingsModels, setEmbeddingsModels] = useState<
-    EmbeddingsModelItem[]
+  const [embeddingsModelsResults, setEmbeddingsModelsResults] = useState<
+    EmbeddingModel[]
   >([]);
-  const [embeddings, setEmbeddings] = useState<number[][] | null>(null);
-  const [metricsMatrices, setMetricsMatrices] = useState<{
-    cosineSimularity: number[][];
-    cosineDistance: number[][];
-    innerProduct: number[][];
-    l2: number[][];
-  } | null>(null);
+  const [embeddings, setEmbeddings] = useState<Embedding[] | null>(null);
+  const [metricsMatrices, setMetricsMatrices] = useState<
+    {
+      embeddingsVector: number[][];
+      embeddingModel: string;
+      cosineSimilarity: number[][];
+      cosineDistance: number[][];
+      innerProduct: number[][];
+      l2: number[][];
+    }[]
+  >([]);
+  const [embeddingModels, setEmbeddingModels] = useState<string[]>([]);
 
   const { data, onChange, errors, validate } = useForm({
     initialValue: () => {
@@ -94,12 +102,13 @@ export default function Embeddings() {
 
     (async () => {
       const apiClient = new ApiClient(appContext);
-      const result = await apiClient.embeddings.getModels();
+      try {
+        const result = await apiClient.embeddings.getModels();
 
-      if (ResultValue.ok(result)) {
-        setEmbeddingsModels(result.data);
+        setEmbeddingsModelsResults(result.data!.listEmbeddingModels!);
         setEmbeddingsModelsStatus("finished");
-      } else {
+      } catch (error) {
+        console.error(Utils.getErrorMessage(error));
         setEmbeddingsModelsStatus("error");
       }
     })();
@@ -137,30 +146,48 @@ export default function Embeddings() {
     setSubmitting(true);
     setEmbeddings(null);
 
-    const { provider, name } = EmbeddingsModelHelper.parseValue(
-      data.embeddingsModel?.value
-    );
-
     const apiClient = new ApiClient(appContext);
-    const result = await apiClient.embeddings.getEmbeddings(
-      provider,
-      name,
-      data.input.map((input) => input.trim())
-    );
+    const results = embeddingModels.map((model) => {
+      const { provider, name } = EmbeddingsModelHelper.parseValue(model);
+      return apiClient.embeddings.getEmbeddings(
+        provider,
+        name,
+        data.input.map((input) => input.trim()),
+        "store"
+      );
+    });
 
-    if (ResultValue.ok(result)) {
-      const matrices = MetricsHelper.matrices(result.data);
-      setMetricsMatrices(matrices);
-      setEmbeddings(result.data);
-    } else if (result.message) {
-      setGlobalError(Utils.getErrorMessage(result));
+    const matricesResults = [];
+    try {
+      await Promise.all(results);
+      for (let i = 0; i < results.length; i++) {
+        console.log(`getting results for ${i}`);
+        const result = await results[i];
+
+        const matrices = MetricsHelper.matrices(
+          result.data!.calculateEmbeddings.map((x) => x!.vector)
+        );
+        console.log(` results ${i} OK`);
+        matricesResults.push({
+          embeddingModel: embeddingModels[i],
+          embeddingsVector: result.data!.calculateEmbeddings.map(
+            (x) => x!.vector
+          ),
+          ...matrices,
+        });
+      }
+    } catch (error) {
+      console.error(Utils.getErrorMessage(error));
+      setGlobalError("Error while calculating embeddings");
     }
-
+    console.log(`setting matrices - ${matricesResults.length}`);
+    setMetricsMatrices(matricesResults);
     setSubmitting(false);
   };
 
-  const embeddingsModelOptions =
-    EmbeddingsModelHelper.getSelectOptions(embeddingsModels);
+  const embeddingsModelOptions = EmbeddingsModelHelper.getSelectOptions(
+    embeddingsModelsResults
+  );
 
   if (Utils.isDevelopment()) {
     console.log("re-render");
@@ -173,7 +200,7 @@ export default function Embeddings() {
           onFollow={onFollow}
           items={[
             {
-              text: "AWS GenAI Chatbot",
+              text: CHATBOT_NAME,
               href: "/",
             },
             {
@@ -211,7 +238,7 @@ export default function Embeddings() {
                   )}
                   <Button
                     data-testid="create"
-                    disabled={submitting}
+                    disabled={submitting || embeddingModels.length === 0}
                     variant="primary"
                     onClick={submitForm}
                   >
@@ -225,20 +252,24 @@ export default function Embeddings() {
                 <Container header={<Header variant="h1">Model</Header>}>
                   <SpaceBetween size="l">
                     <FormField
-                      label="Embeddings Model"
+                      label="Embeddings Models"
                       errorText={errors.embeddingsModel}
                     >
-                      <Select
+                      <Multiselect
                         disabled={submitting}
-                        selectedAriaLabel="Selected"
-                        placeholder="Choose an embeddings model"
-                        statusType={embeddingsModelsStatus}
+                        statusType={embeddingsModelStatus}
+                        selectedOptions={embeddingModels.map((em) => ({
+                          label: EmbeddingsModelHelper.parseValue(em).name,
+                          value: em,
+                        }))}
                         loadingText="Loading embeddings models (might take few seconds)..."
-                        selectedOption={data.embeddingsModel}
+                        placeholder="Choose embeddings models"
                         options={embeddingsModelOptions}
-                        onChange={({ detail: { selectedOption } }) =>
-                          onChange({ embeddingsModel: selectedOption })
-                        }
+                        onChange={({ detail }) => {
+                          setEmbeddingModels(
+                            detail.selectedOptions.map((s) => s.value!)
+                          );
+                        }}
                       />
                     </FormField>
                   </SpaceBetween>
@@ -287,62 +318,146 @@ export default function Embeddings() {
                 </Container>
               </SpaceBetween>
             </Form>
-            {embeddings &&
-              embeddings.length > 1 &&
-              metricsMatrices !== null && (
-                <Container header={<Header variant="h1">Metrics</Header>}>
-                  <SpaceBetween
-                    size="l"
-                    alignItems="center"
-                    direction="horizontal"
+            {
+              //embeddings &&
+              //embeddings.length > 1 &&
+              metricsMatrices.length > 0 && (
+                <SpaceBetween size="m">
+                  <Toggle
+                    checked={pinFirstInput}
+                    onChange={({ detail }) => setPinFirstInput(detail.checked)}
                   >
-                    <FormField label="Cosine Distance">
-                      <MetricsMatrix values={metricsMatrices.cosineDistance} />
-                    </FormField>
-                    <FormField label="Cosine Similarity">
-                      <MetricsMatrix
-                        values={metricsMatrices.cosineSimularity}
-                      />
-                    </FormField>
-                    <FormField label="Inner Product">
-                      <MetricsMatrix values={metricsMatrices.innerProduct} />
-                    </FormField>
-                    <FormField label="Euclidean Distance (L2 Norm)">
-                      <MetricsMatrix values={metricsMatrices.l2} />
-                    </FormField>
-                  </SpaceBetween>
-                  <p>
-                    For embeddings normalized to length 1, cosine similarity and
-                    inner product have the same value. <br />
-                    Cosine distance = 1 - cosine similarity.
-                  </p>
-                </Container>
-              )}
-            {embeddings && (
-              <Container header={<Header variant="h1">Results</Header>}>
-                <SpaceBetween size="l">
-                  {embeddings.map((embedding, index) => (
-                    <FormField
-                      key={index}
-                      label={`[dimentions: ${embedding.length}, ${
-                        MetricsHelper.normalized(embedding)
-                          ? "normalized to length 1"
-                          : "not normalized to length 1"
-                      }] Result ${index + 1}`}
+                    Relative to the first input
+                  </Toggle>
+
+                  {metricsMatrices.map((m) => (
+                    <Container
+                      key={m.embeddingModel}
+                      header={
+                        <Header variant="h2">
+                          {
+                            EmbeddingsModelHelper.parseValue(m.embeddingModel)
+                              .name
+                          }
+                        </Header>
+                      }
                     >
-                      <Textarea
-                        key={index}
-                        rows={5}
-                        value={JSON.stringify(embedding)}
-                        readOnly={true}
-                      />
-                    </FormField>
+                      <SpaceBetween size="xl">
+                        <SpaceBetween size="xl" direction="horizontal">
+                          {/* <FormField label="Cosine Distance">
+                          <MetricsMatrix
+                            values={m.cosineDistance}
+                            min={1}
+                            max={0}
+                          />
+                        </FormField> */}
+                          <FormField label="Cosine Similarity">
+                            <MetricsMatrix
+                              values={m.cosineSimilarity}
+                              min={0}
+                              max={1}
+                              pinFirstInput={pinFirstInput}
+                            />
+                          </FormField>
+                          {/* <FormField label="Inner Product">
+                          <MetricsMatrix values={m.innerProduct} min={0} max={1} pinFirstInput={pinFirstInput} />
+                        </FormField> */}
+                          <FormField label="Euclidean Distance (L2 Norm)">
+                            <MetricsMatrix
+                              values={m.l2}
+                              min={1.3}
+                              max={0}
+                              pinFirstInput={pinFirstInput}
+                            />
+                          </FormField>
+                        </SpaceBetween>
+                        <ExpandableSection headerText="Embeddings vector">
+                          <SpaceBetween size="xl">
+                            {m.embeddingsVector?.map((embedding, index) => (
+                              <FormField
+                                key={index}
+                                label={
+                                  <>
+                                    <Popover
+                                      size="medium"
+                                      position="top"
+                                      triggerType="custom"
+                                      dismissButton={false}
+                                      content={
+                                        <StatusIndicator type="success">
+                                          Vector copied to clipboard
+                                        </StatusIndicator>
+                                      }
+                                    >
+                                      <Button
+                                        variant="inline-icon"
+                                        iconName="copy"
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(
+                                            JSON.stringify(embedding)
+                                          );
+                                        }}
+                                      />
+                                    </Popover>
+                                    {`Input ${index + 1} [dimensions: ${
+                                      embedding.length
+                                    }, magnitude ${MetricsHelper.magnitude(
+                                      embedding
+                                    ).toFixed(2)}]`}
+                                  </>
+                                }
+                              >
+                                <Textarea
+                                  rows={5}
+                                  value={JSON.stringify(embedding)}
+                                  readOnly={true}
+                                />
+                              </FormField>
+                            ))}
+                          </SpaceBetween>
+                        </ExpandableSection>
+                      </SpaceBetween>
+                    </Container>
                   ))}
                 </SpaceBetween>
-              </Container>
+              )
+            }
+            {embeddings && (
+              <Container
+                header={<Header variant="h2">Results</Header>}
+              ></Container>
             )}
           </SpaceBetween>
         </ContentLayout>
+      }
+      info={
+        <HelpPanel header={<Header variant="h3">Embeddings</Header>}>
+          <p>
+            You can select one or more models and enter several text chunks.
+          </p>
+          <p>
+            Semantic similarity via{" "}
+            <Link
+              external
+              href="https://en.wikipedia.org/wiki/Cosine_similarity"
+            >
+              Cosine distance
+            </Link>{" "}
+            and{" "}
+            <Link
+              external
+              href="https://en.wikipedia.org/wiki/Norm_(mathematics)#Euclidean_norm"
+            >
+              L2 Norm (aka Euclidean norm)
+            </Link>{" "}
+            will be calculated and displayed in matrix format for an easy
+            comparison.
+          </p>
+          <p>
+            The intensity of the color is relative to the similarity: the darker
+            the color, the more similar the text chunks.
+          </p>
+        </HelpPanel>
       }
     />
   );

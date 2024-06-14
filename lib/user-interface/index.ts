@@ -1,144 +1,182 @@
+import * as cognitoIdentityPool from "@aws-cdk/aws-cognito-identitypool-alpha";
+import * as cdk from "aws-cdk-lib";
+import * as cf from "aws-cdk-lib/aws-cloudfront";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cognito from "aws-cdk-lib/aws-cognito";
+import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
+import { Construct } from "constructs";
 import {
   ExecSyncOptionsWithBufferEncoding,
   execSync,
 } from "node:child_process";
-import { Construct } from "constructs";
-import { Utils } from "../shared/utils";
+import * as path from "node:path";
 import { Shared } from "../shared";
 import { SystemConfig } from "../shared/types";
-import * as path from "node:path";
-import * as cdk from "aws-cdk-lib";
-import * as cf from "aws-cdk-lib/aws-cloudfront";
-import * as s3 from "aws-cdk-lib/aws-s3";
-import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
-import * as apigateway from "aws-cdk-lib/aws-apigateway";
-import * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
+import { Utils } from "../shared/utils";
+import { ChatBotApi } from "../chatbot-api";
+import { PrivateWebsite } from "./private-website"
+import { PublicWebsite } from "./public-website"
+import { NagSuppressions } from "cdk-nag";
 
 export interface UserInterfaceProps {
   readonly config: SystemConfig;
   readonly shared: Shared;
   readonly userPoolId: string;
   readonly userPoolClientId: string;
-  readonly restApi: apigateway.RestApi;
-  readonly webSocketApi: apigwv2.WebSocketApi;
+  readonly userPoolClient: cognito.UserPoolClient;
+  readonly identityPool: cognitoIdentityPool.IdentityPool;
+  readonly api: ChatBotApi;
+  readonly chatbotFilesBucket: s3.Bucket;
+  readonly crossEncodersEnabled: boolean;
+  readonly sagemakerEmbeddingsEnabled: boolean;
 }
 
 export class UserInterface extends Construct {
+  public readonly publishedDomain: string;
+
   constructor(scope: Construct, id: string, props: UserInterfaceProps) {
     super(scope, id);
 
     const appPath = path.join(__dirname, "react-app");
     const buildPath = path.join(appPath, "dist");
 
+    const uploadLogsBucket = new s3.Bucket(this, "WebsiteLogsBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      enforceSSL: true,
+    });
+
     const websiteBucket = new s3.Bucket(this, "WebsiteBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       autoDeleteObjects: true,
+      bucketName: props.config.privateWebsite ? props.config.domain : undefined, 
       websiteIndexDocument: "index.html",
       websiteErrorDocument: "index.html",
+      enforceSSL: true,
+      serverAccessLogsBucket: uploadLogsBucket,
     });
+    
+    // Deploy either Private (only accessible within VPC) or Public facing website
+    let apiEndpoint: string;
+    let websocketEndpoint: string;
+    let distribution;
+    let publishedDomain: string;
+    
+    if (props.config.privateWebsite) {
+      const privateWebsite = new PrivateWebsite(this, "PrivateWebsite", {...props, websiteBucket: websiteBucket });
+      this.publishedDomain = props.config.domain? props.config.domain : "";
+    } else {
+      const publicWebsite = new PublicWebsite(this, "PublicWebsite", {...props, websiteBucket: websiteBucket });
+      distribution = publicWebsite.distribution
+      this.publishedDomain = distribution.distributionDomainName;
+    }
 
-    const originAccessIdentity = new cf.OriginAccessIdentity(this, "S3OAI");
-    websiteBucket.grantRead(originAccessIdentity);
-
-    const distribution = new cf.CloudFrontWebDistribution(
-      this,
-      "Distirbution",
-      {
-        viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        priceClass: cf.PriceClass.PRICE_CLASS_ALL,
-        httpVersion: cf.HttpVersion.HTTP2_AND_3,
-        originConfigs: [
-          {
-            behaviors: [{ isDefaultBehavior: true }],
-            s3OriginSource: {
-              s3BucketSource: websiteBucket,
-              originAccessIdentity,
-            },
-          },
-          {
-            behaviors: [
-              {
-                pathPattern: "/api/*",
-                allowedMethods: cf.CloudFrontAllowedMethods.ALL,
-                viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                defaultTtl: cdk.Duration.seconds(0),
-                forwardedValues: {
-                  queryString: true,
-                  headers: [
-                    "Referer",
-                    "Origin",
-                    "Authorization",
-                    "Content-Type",
-                    "x-forwarded-user",
-                    "Access-Control-Request-Headers",
-                    "Access-Control-Request-Method",
-                  ],
-                },
-              },
-            ],
-            customOriginSource: {
-              domainName: `${props.restApi.restApiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
-              originHeaders: {
-                "X-Origin-Verify": props.shared.xOriginVerifySecret
-                  .secretValueFromJson("headerValue")
-                  .unsafeUnwrap(),
-              },
-            },
-          },
-          {
-            behaviors: [
-              {
-                pathPattern: "/socket",
-                allowedMethods: cf.CloudFrontAllowedMethods.ALL,
-                viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                forwardedValues: {
-                  queryString: true,
-                  headers: [
-                    "Sec-WebSocket-Key",
-                    "Sec-WebSocket-Version",
-                    "Sec-WebSocket-Protocol",
-                    "Sec-WebSocket-Accept",
-                    "Sec-WebSocket-Extensions",
-                  ],
-                },
-              },
-            ],
-            customOriginSource: {
-              domainName: `${props.webSocketApi.apiId}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`,
-              originHeaders: {
-                "X-Origin-Verify": props.shared.xOriginVerifySecret
-                  .secretValueFromJson("headerValue")
-                  .unsafeUnwrap(),
-              },
-            },
-          },
-        ],
-        errorConfigurations: [
-          {
-            errorCode: 404,
-            errorCachingMinTtl: 0,
-            responseCode: 200,
-            responsePagePath: "/index.html",
-          },
-        ],
-      }
-    );
+      
 
     const exportsAsset = s3deploy.Source.jsonData("aws-exports.json", {
       aws_project_region: cdk.Aws.REGION,
       aws_cognito_region: cdk.Aws.REGION,
       aws_user_pools_id: props.userPoolId,
       aws_user_pools_web_client_id: props.userPoolClientId,
+      aws_cognito_identity_pool_id: props.identityPool.identityPoolId,
+      Auth: {
+        region: cdk.Aws.REGION,
+        userPoolId: props.userPoolId,
+        userPoolWebClientId: props.userPoolClientId,
+        identityPoolId: props.identityPool.identityPoolId,
+      },
+      oauth: props.config.cognitoFederation?.enabled
+          ?  {
+              domain: `${props.config.cognitoFederation.cognitoDomain}.auth.${cdk.Aws.REGION}.amazoncognito.com`,
+              redirectSignIn: `https://${this.publishedDomain}`,
+              redirectSignOut: `https://${this.publishedDomain}`,
+              Scopes: ["email","openid"],
+              responseType: "code",
+            }
+          : undefined,
+      aws_appsync_graphqlEndpoint: props.api.graphqlApi.graphqlUrl,
+      aws_appsync_region: cdk.Aws.REGION,
+      aws_appsync_authenticationType: "AMAZON_COGNITO_USER_POOLS",
+      aws_appsync_apiKey: props.api.graphqlApi?.apiKey,
+      Storage: {
+        AWSS3: {
+          bucket: props.chatbotFilesBucket.bucketName,
+          region: cdk.Aws.REGION,
+        },
+      },
       config: {
-        api_endpoint: `https://${distribution.distributionDomainName}/api`,
-        websocket_endpoint: `wss://${distribution.distributionDomainName}/socket`,
+        auth_federated_provider: props.config.cognitoFederation?.enabled
+            ? {
+                auto_redirect: props.config.cognitoFederation?.autoRedirect,
+                custom: true,
+                name: props.config.cognitoFederation?.customProviderName,
+              }
+            : undefined,
         rag_enabled: props.config.rag.enabled,
+        cross_encoders_enabled: props.crossEncodersEnabled,
+        sagemaker_embeddings_enabled: props.sagemakerEmbeddingsEnabled,
         default_embeddings_model: Utils.getDefaultEmbeddingsModel(props.config),
         default_cross_encoder_model: Utils.getDefaultCrossEncoderModel(
           props.config
         ),
+        privateWebsite: props.config.privateWebsite ? true : false,
       },
+    });
+
+    // Allow authenticated web users to read upload data to the attachments bucket for their chat files
+    // ref: https://docs.amplify.aws/lib/storage/getting-started/q/platform/js/#using-amazon-s3
+    props.identityPool.authenticatedRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        resources: [
+          `${props.chatbotFilesBucket.bucketArn}/public/*`,
+          `${props.chatbotFilesBucket.bucketArn}/protected/\${cognito-identity.amazonaws.com:sub}/*`,
+          `${props.chatbotFilesBucket.bucketArn}/private/\${cognito-identity.amazonaws.com:sub}/*`,
+        ],
+      })
+    );
+    props.identityPool.authenticatedRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ["s3:ListBucket"],
+        resources: [`${props.chatbotFilesBucket.bucketArn}`],
+        conditions: {
+          StringLike: {
+            "s3:prefix": [
+              "public/",
+              "public/*",
+              "protected/",
+              "protected/*",
+              "private/${cognito-identity.amazonaws.com:sub}/",
+              "private/${cognito-identity.amazonaws.com:sub}/*",
+            ],
+          },
+        },
+      })
+    );
+
+    // Enable CORS for the attachments bucket to allow uploads from the user interface
+    // ref: https://docs.amplify.aws/lib/storage/getting-started/q/platform/js/#amazon-s3-bucket-cors-policy-setup
+    props.chatbotFilesBucket.addCorsRule({
+      allowedMethods: [
+        s3.HttpMethods.GET,
+        s3.HttpMethods.PUT,
+        s3.HttpMethods.POST,
+        s3.HttpMethods.DELETE,
+      ],
+      allowedOrigins: ["*"],
+      allowedHeaders: ["*"],
+      exposedHeaders: [
+        "x-amz-server-side-encryption",
+        "x-amz-request-id",
+        "x-amz-id-2",
+        "ETag",
+      ],
+      maxAge: 3000,
     });
 
     const asset = s3deploy.Source.asset(appPath, {
@@ -180,16 +218,24 @@ export class UserInterface extends Construct {
     });
 
     new s3deploy.BucketDeployment(this, "UserInterfaceDeployment", {
+      prune: false,
       sources: [asset, exportsAsset],
       destinationBucket: websiteBucket,
-      distribution,
+      distribution: props.config.privateWebsite ? undefined : distribution
     });
 
-    // ###################################################
-    // Outputs
-    // ###################################################
-    new cdk.CfnOutput(this, "UserInterfaceDomanName", {
-      value: `https://${distribution.distributionDomainName}`,
-    });
+   
+    /**
+     * CDK NAG suppression
+     */
+    NagSuppressions.addResourceSuppressions(
+      uploadLogsBucket, 
+      [
+        {
+          id: "AwsSolutions-S1",
+          reason: "Bucket is the server access logs bucket for websiteBucket.",
+        },
+      ]
+    );
   }
 }

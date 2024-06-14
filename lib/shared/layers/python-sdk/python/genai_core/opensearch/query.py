@@ -1,14 +1,20 @@
 import genai_core.embeddings
 import genai_core.cross_encoder
 from typing import List
-from aws_lambda_powertools import Logger
 from .client import get_open_search_client
+from aws_lambda_powertools import Logger
+from genai_core.types import CommonError, Task
 
 logger = Logger()
 
 
 def query_workspace_open_search(
-    workspace_id: str, workspace: dict, query: str, limit: int, full_response: bool
+    workspace_id: str,
+    workspace: dict,
+    query: str,
+    limit: int,
+    full_response: bool,
+    threshold: float = 0.0,
 ):
     index_name = workspace_id.replace("-", "")
 
@@ -21,22 +27,25 @@ def query_workspace_open_search(
     vector_search_limit = 25
     keyword_search_limit = 25
 
+    vector_search_records = []
+    keyword_search_records = []
+
     selected_model = genai_core.embeddings.get_embeddings_model(
         embeddings_model_provider, embeddings_model_name
     )
 
     if selected_model is None:
-        raise genai_core.types.CommonError("Embeddings model not found")
+        raise CommonError("Embeddings model not found")
 
     cross_encoder_model = genai_core.cross_encoder.get_cross_encoder_model(
         cross_encoder_model_provider, cross_encoder_model_name
     )
 
     if cross_encoder_model is None:
-        raise genai_core.types.CommonError("Cross encoder model not found")
+        raise CommonError("Cross encoder model not found")
 
     query_embeddings = genai_core.embeddings.generate_embeddings(
-        selected_model, [query]
+        selected_model, [query], Task.RETRIEVE
     )[0]
 
     items = []
@@ -71,6 +80,11 @@ def query_workspace_open_search(
                     current["sources"].append(source)
             current["sources"] = sorted(current["sources"])
 
+            for source in current["sources"]:
+                if source not in item["sources"]:
+                    item["sources"].append(source)
+            item["sources"] = sorted(item["sources"])
+
             if current["vector_search_score"] is None:
                 current["vector_search_score"] = item["vector_search_score"]
             if current["keyword_search_score"] is None:
@@ -90,11 +104,10 @@ def query_workspace_open_search(
         )
 
         for i in range(len(unique_items)):
-            unique_items[i]["score"] = passage_scores[i]
-            score_dict[unique_items[i]["chunk_id"]] = passage_scores[i]
-
+            score = passage_scores[i]
+            unique_items[i]["score"] = score
+            score_dict[unique_items[i]["chunk_id"]] = score
     unique_items = sorted(unique_items, key=lambda x: x["score"], reverse=True)
-    unique_items = unique_items[:limit]
 
     for record in vector_search_records:
         record["score"] = score_dict[record["chunk_id"]]
@@ -102,6 +115,7 @@ def query_workspace_open_search(
         record["score"] = score_dict[record["chunk_id"]]
 
     if full_response:
+        unique_items = unique_items[:limit]
         ret_value = {
             "engine": "opensearch",
             "supported_languages": languages,
@@ -111,10 +125,26 @@ def query_workspace_open_search(
             "keyword_search_items": keyword_search_records,
         }
     else:
+        ret_items = list(filter(lambda val: val["score"] > threshold, unique_items))[
+            :limit
+        ]
+        if len(ret_items) < limit:
+            unique_items = sorted(
+                unique_items, key=lambda x: x["vector_search_score"] or -1, reverse=True
+            )
+            ret_items = ret_items + (
+                list(
+                    filter(
+                        lambda val: (val["vector_search_score"] or -1) > 0.5,
+                        unique_items,
+                    )
+                )[: (limit - len(ret_items))]
+            )
+
         ret_value = {
             "engine": "opensearch",
             "supported_languages": languages,
-            "items": list(filter(lambda val: val["score"] > 0, unique_items)),
+            "items": ret_items,
         }
 
     logger.info(ret_value)
@@ -153,7 +183,7 @@ def _convert_records(source: str, records: List[dict]):
             converted["keyword_search_score"] = current_score
             converted["vector_search_score"] = None
         else:
-            raise genai_core.types.CommonError("Unknown source")
+            raise CommonError("Unknown source")
 
         converted_records.append(converted)
 
@@ -165,7 +195,10 @@ def vector_query(client, index_name: str, vector: List[float], size: int = 25):
 
     response = client.search(index=index_name, body=query, size=size)
 
-    return response["hits"]["hits"]
+    ret_value = response["hits"]["hits"]
+    ret_value = ret_value if ret_value is not None else []
+
+    return ret_value
 
 
 def keyword_query(client, index_name: str, text: str, size: int = 25):
@@ -173,4 +206,7 @@ def keyword_query(client, index_name: str, text: str, size: int = 25):
 
     response = client.search(index=index_name, body=query, size=size)
 
-    return response["hits"]["hits"]
+    ret_value = response["hits"]["hits"]
+    ret_value = ret_value if ret_value is not None else []
+
+    return ret_value

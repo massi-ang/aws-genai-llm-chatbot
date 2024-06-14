@@ -2,10 +2,14 @@ import * as sagemaker from "aws-cdk-lib/aws-sagemaker";
 
 export type ModelProvider = "sagemaker" | "bedrock" | "openai";
 
-export enum SupportedSageMakerLLM {
-  FalconLite = "FalconLite",
-  Llama2_13b_Chat = "Llama2_13b_Chat",
-  Llama2_13b_Base = "Llama2_13b_Base",
+export enum SupportedSageMakerModels {
+  FalconLite = "FalconLite [ml.g5.12xlarge]",
+  Llama2_13b_Chat = "Llama2_13b_Chat [ml.g5.12xlarge]",
+  Mistral7b_Instruct = "Mistral7b_Instruct 0.1 [ml.g5.2xlarge]",
+  Mistral7b_Instruct2 = "Mistral7b_Instruct 0.2 [ml.g5.2xlarge]",
+  Mixtral_8x7b_Instruct = "Mixtral_8x7B_Instruct 0.1 [ml.g5.48xlarge]",
+  Idefics_9b = "Idefics_9b (Multimodal) [ml.g5.12xlarge]",
+  Idefics_80b = "Idefics_80b (Multimodal) [ml.g5.48xlarge]",
 }
 
 export enum SupportedRegion {
@@ -39,8 +43,59 @@ export enum SupportedRegion {
   US_WEST_2 = "us-west-2",
 }
 
+export enum SupportedBedrockRegion {
+  AP_NORTHEAST_1 = "ap-northeast-1",
+  AP_SOUTHEAST_1 = "ap-southeast-1",
+  AP_SOUTHEAST_2 = "ap-southeast-2",
+  EU_CENTRAL_1 = "eu-central-1",
+  EU_WEST_3 = "eu-west-3",
+  US_EAST_1 = "us-east-1",
+  US_WEST_2 = "us-west-2",
+}
+
+export enum ModelInterface {
+  LangChain = "langchain",
+  MultiModal = "multimodal",
+}
+
+export enum Modality {
+  Text = "TEXT",
+  Image = "IMAGE",
+  Embedding = "EMBEDDING",
+}
+
+export enum Direction {
+  In = "IN",
+  Out = "OUT",
+}
+
 export interface SystemConfig {
   prefix: string;
+  vpc?: {
+    vpcId?: string;
+    createVpcEndpoints?: boolean;
+    vpcDefaultSecurityGroup?: string;
+  };
+  certificate?: string;
+  domain?: string;
+  privateWebsite?: boolean;
+  cognitoFederation?: {
+    enabled?: boolean;
+    autoRedirect?: boolean;
+    customProviderName?: string;
+    customProviderType?: string;
+    customSAML?: {
+      metadataDocumentUrl?: string;
+    }
+    customOIDC?: {
+      OIDCClient?: string;
+      OIDCSecret?: string;
+      OIDCIssuerURL?: string;
+    }
+    cognitoDomain?: string;
+  };
+  cfGeoRestrictEnable: boolean;
+  cfGeoRestrictList: [];
   bedrock?: {
     enabled?: boolean;
     region?: SupportedRegion;
@@ -48,7 +103,20 @@ export interface SystemConfig {
     roleArn?: string;
   };
   llms: {
-    sagemaker: SupportedSageMakerLLM[];
+    sagemaker: SupportedSageMakerModels[];
+    huggingfaceApiSecretArn?: string;
+    sagemakerSchedule?: {
+      enabled?: boolean;
+      timezonePicker?: string;
+      enableCronFormat?: boolean;
+      sagemakerCronStartSchedule?: string;
+      sagemakerCronStopSchedule?: string;
+      daysForSchedule?: string;
+      scheduleStartTime?: string;
+      scheduleStopTime?: string;
+      enableScheduleEndDate?: boolean;
+      startScheduleEndDate?: string;
+    };
   };
   rag: {
     enabled: boolean;
@@ -68,6 +136,7 @@ export interface SystemConfig {
           region?: SupportedRegion;
           roleArn?: string;
         }[];
+        enterprise?: boolean;
       };
     };
     embeddingsModels: {
@@ -87,4 +156,14 @@ export interface SystemConfig {
 export interface SageMakerLLMEndpoint {
   name: string;
   endpoint: sagemaker.CfnEndpoint;
+}
+
+export interface SageMakerModelEndpoint {
+  name: string;
+  endpoint: sagemaker.CfnEndpoint;
+  responseStreamingSupported: boolean;
+  inputModalities: Modality[];
+  outputModalities: Modality[];
+  interface: ModelInterface;
+  ragSupported: boolean;
 }

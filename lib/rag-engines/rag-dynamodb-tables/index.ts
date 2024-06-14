@@ -1,14 +1,15 @@
 import * as cdk from "aws-cdk-lib";
-import { Construct } from "constructs";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { Construct } from "constructs";
 
 export class RagDynamoDBTables extends Construct {
   public readonly workspacesTable: dynamodb.Table;
   public readonly documentsTable: dynamodb.Table;
   public readonly workspacesByObjectTypeIndexName: string =
     "by_object_type_idx";
-  public readonly documentsByCompountKeyIndexName: string =
+  public readonly documentsByCompoundKeyIndexName: string =
     "by_compound_key_idx";
+  public readonly documentsByStatusIndexName: string = "by_status_idx";
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
@@ -24,6 +25,7 @@ export class RagDynamoDBTables extends Construct {
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecovery: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
@@ -50,17 +52,30 @@ export class RagDynamoDBTables extends Construct {
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecovery: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     documentsTable.addGlobalSecondaryIndex({
-      indexName: this.documentsByCompountKeyIndexName,
+      indexName: this.documentsByCompoundKeyIndexName,
       partitionKey: {
         name: "workspace_id",
         type: dynamodb.AttributeType.STRING,
       },
       sortKey: {
         name: "compound_sort_key",
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
+    documentsTable.addGlobalSecondaryIndex({
+      indexName: this.documentsByStatusIndexName,
+      partitionKey: {
+        name: "status",
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: "document_type",
         type: dynamodb.AttributeType.STRING,
       },
     });

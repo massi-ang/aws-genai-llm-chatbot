@@ -1,9 +1,10 @@
-import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { SystemConfig } from "../../shared/types";
-import { Shared } from "../../shared";
+import * as path from "path";
 import { DeploymentType, SageMakerModel } from "../../sagemaker-model";
+import { Shared } from "../../shared";
+import { SystemConfig } from "../../shared/types";
+import { NagSuppressions } from "cdk-nag";
 
 export interface SageMakerRagModelsProps {
   readonly config: SystemConfig;
@@ -24,7 +25,7 @@ export class SageMakerRagModels extends Construct {
       .filter((c) => c.provider === "sagemaker")
       .map((c) => c.name);
 
-    const model = new SageMakerModel(this, "Models", {
+    const model = new SageMakerModel(this, "Model", {
       vpc: props.shared.vpc,
       region: cdk.Aws.REGION,
       model: {

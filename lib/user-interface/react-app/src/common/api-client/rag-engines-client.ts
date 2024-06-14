@@ -1,51 +1,15 @@
-import { ApiResult, EngineItem, KendraIndexItem } from "../types";
-import { ApiClientBase } from "./api-client-base";
+import { API } from "aws-amplify";
+import { GraphQLQuery, GraphQLResult } from "@aws-amplify/api";
+import { listRagEngines } from "../../graphql/queries";
+import { ListRagEnginesQuery } from "../../API";
 
-export class RagEnginesClient extends ApiClientBase {
-  async getRagEngines(): Promise<ApiResult<EngineItem[]>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(this.getApiUrl("/rag/engines"), {
-        headers,
-      });
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
-  }
-
-  async getKendraIndexes(): Promise<ApiResult<KendraIndexItem[]>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(
-        this.getApiUrl("/rag/engines/kendra/indexes"),
-        {
-          headers,
-        }
-      );
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
-  }
-
-  async startKendraDataSync(workspaceId: string): Promise<ApiResult<void>> {
-    try {
-      const headers = await this.getHeaders();
-      const result = await fetch(
-        this.getApiUrl("/rag/engines/kendra/data-sync"),
-        {
-          headers,
-          method: "POST",
-          body: JSON.stringify({ workspaceId }),
-        }
-      );
-
-      return result.json();
-    } catch (error) {
-      return this.error(error);
-    }
+export class RagEnginesClient {
+  async getRagEngines(): Promise<
+    GraphQLResult<GraphQLQuery<ListRagEnginesQuery>>
+  > {
+    const result = await API.graphql<GraphQLQuery<ListRagEnginesQuery>>({
+      query: listRagEngines,
+    });
+    return result;
   }
 }

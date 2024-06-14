@@ -10,11 +10,7 @@ import {
   Tabs,
 } from "@cloudscape-design/components";
 import { useContext, useEffect, useState } from "react";
-import {
-  LoadingStatus,
-  ResultValue,
-  WorkspaceItem,
-} from "../../../common/types";
+import { LoadingStatus } from "../../../common/types";
 import { OptionsHelper } from "../../../common/helpers/options-helper";
 import BaseAppLayout from "../../../components/base-app-layout";
 import useOnFollow from "../../../common/hooks/use-on-follow";
@@ -28,6 +24,9 @@ import AddText from "./add-text";
 import AddQnA from "./add-qna";
 import CrawlWebsite from "./crawl-website";
 import DataFileUpload from "./data-file-upload";
+import { CHATBOT_NAME } from "../../../common/constants";
+import AddRssSubscription from "./add-rss-subscription";
+import { Workspace } from "../../../API";
 
 export default function AddData() {
   const onFollow = useOnFollow();
@@ -35,7 +34,7 @@ export default function AddData() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "file");
-  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspacesLoadingStatus, setWorkspacesLoadingStatus] =
     useState<LoadingStatus>("loading");
   const { data, onChange, errors, validate } = useForm<AddDataData>({
@@ -66,12 +65,12 @@ export default function AddData() {
 
     (async () => {
       const apiClient = new ApiClient(appContext);
-      const result = await apiClient.workspaces.getWorkspaces();
+      try {
+        const result = await apiClient.workspaces.getWorkspaces();
 
-      if (ResultValue.ok(result)) {
         const workspaceId = searchParams.get("workspaceId");
         if (workspaceId) {
-          const workspace = result.data.find(
+          const workspace = result.data?.listWorkspaces.find(
             (workspace) => workspace.id === workspaceId
           );
 
@@ -82,9 +81,9 @@ export default function AddData() {
           }
         }
 
-        setWorkspaces(result.data);
+        setWorkspaces(result.data?.listWorkspaces!);
         setWorkspacesLoadingStatus("finished");
-      } else {
+      } catch (error) {
         setWorkspacesLoadingStatus("error");
       }
     })();
@@ -96,7 +95,8 @@ export default function AddData() {
 
   const workspace = workspaces.find((c) => c.id === data.workspace?.value);
   const showTabs = !workspace?.kendraIndexExternal;
-  const disabledTabs = workspace?.engine === "kendra" ? ["qna", "website"] : [];
+  const disabledTabs =
+    workspace?.engine === "kendra" ? ["qna", "website", "rssfeed"] : [];
 
   return (
     <BaseAppLayout
@@ -106,7 +106,7 @@ export default function AddData() {
           onFollow={onFollow}
           items={[
             {
-              text: "AWS GenAI Chatbot",
+              text: CHATBOT_NAME,
               href: "/",
             },
             {
@@ -218,6 +218,20 @@ export default function AddData() {
                     disabled: disabledTabs.includes("website"),
                     content: (
                       <CrawlWebsite
+                        data={data}
+                        validate={validate}
+                        submitting={submitting}
+                        setSubmitting={setSubmitting}
+                        selectedWorkspace={selectedWorkspace}
+                      />
+                    ),
+                  },
+                  {
+                    label: "RSS Feeds",
+                    id: "rssfeed",
+                    disabled: disabledTabs.includes("rssfeed"),
+                    content: (
+                      <AddRssSubscription
                         data={data}
                         validate={validate}
                         submitting={submitting}

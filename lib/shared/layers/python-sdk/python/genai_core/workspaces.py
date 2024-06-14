@@ -2,17 +2,17 @@ import os
 import json
 import uuid
 import boto3
+import genai_core.embeddings
 from datetime import datetime
-from aws_lambda_powertools import Logger
+from genai_core.types import Task
 
-logger = Logger()
 dynamodb = boto3.resource("dynamodb")
 sfn_client = boto3.client("stepfunctions")
 
-WORKSPACES_TABLE_NAME = os.environ["WORKSPACES_TABLE_NAME"]
-WORKSPACES_BY_OBJECT_TYPE_INDEX_NAME = os.environ[
+WORKSPACES_TABLE_NAME = os.environ.get("WORKSPACES_TABLE_NAME")
+WORKSPACES_BY_OBJECT_TYPE_INDEX_NAME = os.environ.get(
     "WORKSPACES_BY_OBJECT_TYPE_INDEX_NAME"
-]
+)
 CREATE_AURORA_WORKSPACE_WORKFLOW_ARN = os.environ.get(
     "CREATE_AURORA_WORKSPACE_WORKFLOW_ARN"
 )
@@ -22,10 +22,12 @@ CREATE_OPEN_SEARCH_WORKSPACE_WORKFLOW_ARN = os.environ.get(
 CREATE_KENDRA_WORKSPACE_WORKFLOW_ARN = os.environ.get(
     "CREATE_KENDRA_WORKSPACE_WORKFLOW_ARN"
 )
+DELETE_WORKSPACE_WORKFLOW_ARN = os.environ.get("DELETE_WORKSPACE_WORKFLOW_ARN")
 
 WORKSPACE_OBJECT_TYPE = "workspace"
 
-table = dynamodb.Table(WORKSPACES_TABLE_NAME)
+if WORKSPACES_TABLE_NAME:
+    table = dynamodb.Table(WORKSPACES_TABLE_NAME)
 
 
 def list_workspaces():
@@ -105,6 +107,14 @@ def create_workspace_aurora(
     workspace_id = str(uuid.uuid4())
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
+    embeddings_model = genai_core.embeddings.get_embeddings_model(
+        embeddings_model_provider, embeddings_model_name
+    )
+    if not embeddings_model:
+        raise genai_core.types.CommonError("Invalid embeddings model")
+    # Verify that the embeddings model
+    genai_core.embeddings.generate_embeddings(embeddings_model, ["test"], Task.STORE)
+
     item = {
         "workspace_id": workspace_id,
         "object_type": WORKSPACE_OBJECT_TYPE,
@@ -132,7 +142,7 @@ def create_workspace_aurora(
     }
 
     response = table.put_item(Item=item)
-    logger.info(response)
+    print(response)
 
     response = sfn_client.start_execution(
         stateMachineArn=CREATE_AURORA_WORKSPACE_WORKFLOW_ARN,
@@ -143,11 +153,9 @@ def create_workspace_aurora(
         ),
     )
 
-    logger.info(response)
+    print(response)
 
-    return {
-        "id": workspace_id,
-    }
+    return item
 
 
 def create_workspace_open_search(
@@ -165,6 +173,14 @@ def create_workspace_open_search(
 ):
     workspace_id = str(uuid.uuid4())
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    embeddings_model = genai_core.embeddings.get_embeddings_model(
+        embeddings_model_provider, embeddings_model_name
+    )
+    if not embeddings_model:
+        raise genai_core.types.CommonError("Invalid embeddings model")
+    # Verify that the embeddings model
+    genai_core.embeddings.generate_embeddings(embeddings_model, ["test"], Task.STORE)
 
     item = {
         "workspace_id": workspace_id,
@@ -193,7 +209,7 @@ def create_workspace_open_search(
     }
 
     response = table.put_item(Item=item)
-    logger.info(response)
+    print(response)
 
     response = sfn_client.start_execution(
         stateMachineArn=CREATE_OPEN_SEARCH_WORKSPACE_WORKFLOW_ARN,
@@ -204,18 +220,19 @@ def create_workspace_open_search(
         ),
     )
 
-    logger.info(response)
+    print(response)
 
-    return {
-        "id": workspace_id,
-    }
+    return item
 
 
-def create_workspace_kendra(workspace_name: str, kendra_index: dict):
+def create_workspace_kendra(
+    workspace_name: str, kendra_index: dict, use_all_data: bool
+):
     workspace_id = str(uuid.uuid4())
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     kendra_index_id = kendra_index["id"]
     kendra_index_external = kendra_index["external"]
+    use_all_data = use_all_data if not kendra_index_external else True
 
     item = {
         "workspace_id": workspace_id,
@@ -226,6 +243,7 @@ def create_workspace_kendra(workspace_name: str, kendra_index: dict):
         "status": "submitted",
         "kendra_index_id": kendra_index_id,
         "kendra_index_external": kendra_index_external,
+        "kendra_use_all_data": use_all_data,
         "documents": 0,
         "vectors": 0,
         "size_in_bytes": 0,
@@ -234,7 +252,7 @@ def create_workspace_kendra(workspace_name: str, kendra_index: dict):
     }
 
     response = table.put_item(Item=item)
-    logger.info(response)
+    print(response)
 
     response = sfn_client.start_execution(
         stateMachineArn=CREATE_KENDRA_WORKSPACE_WORKFLOW_ARN,
@@ -245,8 +263,31 @@ def create_workspace_kendra(workspace_name: str, kendra_index: dict):
         ),
     )
 
-    logger.info(response)
+    print(response)
 
-    return {
-        "id": workspace_id,
-    }
+    return item
+
+
+def delete_workspace(workspace_id: str):
+    response = table.get_item(
+        Key={"workspace_id": workspace_id, "object_type": WORKSPACE_OBJECT_TYPE}
+    )
+
+    item = response.get("Item")
+
+    if not item:
+        raise genai_core.types.CommonError("Workspace not found")
+
+    if item["status"] != "ready" and item["status"] != "error":
+        raise genai_core.types.CommonError("Workspace not ready for deletion")
+
+    response = sfn_client.start_execution(
+        stateMachineArn=DELETE_WORKSPACE_WORKFLOW_ARN,
+        input=json.dumps(
+            {
+                "workspace_id": workspace_id,
+            }
+        ),
+    )
+
+    print(response)

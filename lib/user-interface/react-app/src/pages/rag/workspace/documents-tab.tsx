@@ -6,16 +6,15 @@ import {
   Pagination,
 } from "@cloudscape-design/components";
 import { useCallback, useContext, useEffect, useState } from "react";
-import {
-  DocumentResult,
-  RagDocumentType,
-  ResultValue,
-} from "../../../common/types";
+import { RagDocumentType } from "../../../common/types";
 import RouterButton from "../../../components/wrappers/router-button";
 import { TableEmptyState } from "../../../components/table-empty-state";
 import { AppContext } from "../../../common/app-context";
 import { ApiClient } from "../../../common/api-client/api-client";
 import { getColumnDefinition } from "./columns";
+import { Utils } from "../../../common/utils";
+import { Document, DocumentsResult } from "../../../API";
+import DocumentDeleteModal from "../../../components/rag/document-delete-modal";
 
 export interface DocumentsTabProps {
   workspaceId?: string;
@@ -26,7 +25,15 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   const appContext = useContext(AppContext);
   const [loading, setLoading] = useState(true);
   const [currentPageIndex, setCurrentPageIndex] = useState(1);
-  const [pages, setPages] = useState<DocumentResult[]>([]);
+  const [pages, setPages] = useState<(DocumentsResult | undefined)[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<
+    Document | undefined
+  >();
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
 
   const getDocuments = useCallback(
     async (params: { lastDocumentId?: string; pageIndex?: number }) => {
@@ -36,30 +43,33 @@ export default function DocumentsTab(props: DocumentsTabProps) {
       setLoading(true);
 
       const apiClient = new ApiClient(appContext);
-      const result = await apiClient.documents.getDocuments(
-        props.workspaceId,
-        props.documentType,
-        params?.lastDocumentId
-      );
+      try {
+        const result = await apiClient.documents.getDocuments(
+          props.workspaceId,
+          props.documentType,
+          params?.lastDocumentId
+        );
 
-      if (ResultValue.ok(result)) {
         setPages((current) => {
           const foundIndex = current.findIndex(
-            (c) => c.lastDocumentId === result.data.lastDocumentId
+            (c) =>
+              c!.lastDocumentId === result.data!.listDocuments.lastDocumentId
           );
 
           if (foundIndex !== -1) {
-            current[foundIndex] = result.data;
+            current[foundIndex] = result.data?.listDocuments;
             return [...current];
           } else if (typeof params.pageIndex !== "undefined") {
-            current[params.pageIndex - 1] = result.data;
+            current[params.pageIndex - 1] = result.data?.listDocuments;
             return [...current];
-          } else if (result.data.items.length === 0) {
+          } else if (result.data?.listDocuments.items.length === 0) {
             return current;
           } else {
-            return [...current, result.data];
+            return [...current, result.data?.listDocuments];
           }
         });
+      } catch (error) {
+        console.error(Utils.getErrorMessage(error));
       }
 
       setLoading(false);
@@ -93,8 +103,38 @@ export default function DocumentsTab(props: DocumentsTabProps) {
     if (currentPageIndex <= 1) {
       await getDocuments({ pageIndex: currentPageIndex });
     } else {
-      const lastDocumentId = pages[currentPageIndex - 2]?.lastDocumentId;
+      const lastDocumentId = pages[currentPageIndex - 2]?.lastDocumentId!;
       await getDocuments({ lastDocumentId });
+    }
+  };
+
+  const handleDelete = async (document: Document) => {
+    setDocumentToDelete(document);
+    setIsModalOpen(true);
+  };
+
+  const handleOnDeleteOfModal = () => {
+    if (documentToDelete?.id) {
+      handleConfirmDelete(documentToDelete.id);
+      setDocumentToDelete(undefined);
+      setIsModalOpen(false);
+    }
+  };
+
+  /* eslint-disable */
+  const handleConfirmDelete = async (documentId: string) => {
+    if (!appContext || !props.workspaceId) return;
+
+    const apiClient = new ApiClient(appContext);
+
+    try {
+      await apiClient.documents.deleteDocument(props.workspaceId, documentId);
+
+      setTimeout(async () => {
+        refreshPage();
+      }, 1500);
+    } catch (error) {
+      console.error("An error occurred while deleting the document:", error);
     }
   };
 
@@ -102,48 +142,63 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   const typeAddStr = ragDocumentTypeToAddString(props.documentType);
   const typeTitleStr = ragDocumentTypeToTitleString(props.documentType);
 
+  const columnDefinitions = getColumnDefinition(
+    props.documentType,
+    handleDelete
+  );
+
   return (
-    <Table
-      loading={loading}
-      loadingText={`Loading ${typeStr}s`}
-      columnDefinitions={getColumnDefinition(props.documentType)}
-      items={pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.items}
-      header={
-        <Header
-          actions={
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={refreshPage} />
-              <RouterButton
-                href={`/rag/workspaces/add-data?workspaceId=${props.workspaceId}&tab=${props.documentType}`}
-              >
-                {typeAddStr}
-              </RouterButton>
-            </SpaceBetween>
-          }
-          description="Please expect a delay for your changes to be reflected. Press the refresh button to see the latest changes."
-        >
-          {typeTitleStr}
-        </Header>
-      }
-      empty={
-        <TableEmptyState
-          resourceName={typeStr}
-          createHref={`/rag/workspaces/add-data?workspaceId=${props.workspaceId}&tab=${props.documentType}`}
-          createText={typeAddStr}
+    <>
+      {isModalOpen && (
+        <DocumentDeleteModal
+          visible={isModalOpen}
+          onDelete={handleOnDeleteOfModal}
+          onDiscard={handleCloseModal}
+          document={documentToDelete}
         />
-      }
-      pagination={
-        pages.length === 0 ? null : (
-          <Pagination
-            openEnd={true}
-            pagesCount={0}
-            currentPageIndex={currentPageIndex}
-            onNextPageClick={onNextPageClick}
-            onPreviousPageClick={onPreviousPageClick}
+      )}
+      <Table
+        loading={loading}
+        loadingText={`Loading ${typeStr}s`}
+        columnDefinitions={columnDefinitions}
+        items={pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.items!}
+        header={
+          <Header
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button iconName="refresh" onClick={refreshPage} />
+                <RouterButton
+                  href={`/rag/workspaces/add-data?workspaceId=${props.workspaceId}&tab=${props.documentType}`}
+                >
+                  {typeAddStr}
+                </RouterButton>
+              </SpaceBetween>
+            }
+            description="Please expect a delay for your changes to be reflected. Press the refresh button to see the latest changes."
+          >
+            {typeTitleStr}
+          </Header>
+        }
+        empty={
+          <TableEmptyState
+            resourceName={typeStr}
+            createHref={`/rag/workspaces/add-data?workspaceId=${props.workspaceId}&tab=${props.documentType}`}
+            createText={typeAddStr}
           />
-        )
-      }
-    />
+        }
+        pagination={
+          pages.length === 0 ? null : (
+            <Pagination
+              openEnd={true}
+              pagesCount={0}
+              currentPageIndex={currentPageIndex}
+              onNextPageClick={onNextPageClick}
+              onPreviousPageClick={onPreviousPageClick}
+            />
+          )
+        }
+      />
+    </>
   );
 }
 
@@ -157,6 +212,10 @@ function ragDocumentTypeToString(type: RagDocumentType) {
       return "Q&A";
     case "website":
       return "Website";
+    case "rssfeed":
+      return "RSS Feed";
+    case "rsspost":
+      return "RSS Post";
   }
 }
 
@@ -170,6 +229,10 @@ function ragDocumentTypeToTitleString(type: RagDocumentType) {
       return "Q&As";
     case "website":
       return "Websites";
+    case "rssfeed":
+      return "RSS Feeds";
+    case "rsspost":
+      return "RSS Posts";
   }
 }
 
@@ -183,5 +246,9 @@ function ragDocumentTypeToAddString(type: RagDocumentType) {
       return "Add Q&A";
     case "website":
       return "Crawl website";
+    case "rssfeed":
+      return "Subcribe to RSS Feed";
+    case "rsspost":
+      return "Add RSS Post";
   }
 }

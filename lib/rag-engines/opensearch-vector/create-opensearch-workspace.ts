@@ -1,15 +1,16 @@
-import * as path from "path";
 import * as cdk from "aws-cdk-lib";
-import { Construct } from "constructs";
-import { SystemConfig } from "../../shared/types";
-import { Shared } from "../../shared";
-import { RagDynamoDBTables } from "../rag-dynamodb-tables";
-import * as sfn from "aws-cdk-lib/aws-stepfunctions";
-import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as oss from "aws-cdk-lib/aws-opensearchserverless";
+import * as sfn from "aws-cdk-lib/aws-stepfunctions";
+import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
+import { Construct } from "constructs";
+import * as path from "path";
+import { Shared } from "../../shared";
+import { SystemConfig } from "../../shared/types";
+import { RagDynamoDBTables } from "../rag-dynamodb-tables";
+import { RemovalPolicy } from "aws-cdk-lib";
 
 export interface CreateOpenSearchWorkspaceProps {
   readonly config: SystemConfig;
@@ -36,17 +37,13 @@ export class CreateOpenSearchWorkspace extends Construct {
       "CreateOpenSearchWorkspaceFunction",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/create-workflow/create")
         ),
         runtime: props.shared.pythonRuntime,
         architecture: props.shared.lambdaArchitecture,
         handler: "index.lambda_handler",
-        layers: [
-          props.shared.powerToolsLayer,
-          props.shared.commonLayer.layer,
-          props.shared.pythonSDKLayer,
-        ],
+        layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
         timeout: cdk.Duration.minutes(5),
         logRetention: logs.RetentionDays.ONE_WEEK,
         environment: {
@@ -144,6 +141,14 @@ export class CreateOpenSearchWorkspace extends Construct {
       .next(setReady)
       .next(new sfn.Succeed(this, "Success"));
 
+    const logGroup = new logs.LogGroup(
+      this,
+      "CreateOpenSearchWorkspaceSMLogGroup",
+      {
+        removalPolicy: RemovalPolicy.DESTROY,
+      }
+    );
+
     const stateMachine = new sfn.StateMachine(
       this,
       "CreateOpenSearchWorkspace",
@@ -151,6 +156,11 @@ export class CreateOpenSearchWorkspace extends Construct {
         definitionBody: sfn.DefinitionBody.fromChainable(workflow),
         timeout: cdk.Duration.minutes(5),
         comment: "Create OpenSearch Workspace Workflow",
+        tracingEnabled: true,
+        logs: {
+          destination: logGroup,
+          level: sfn.LogLevel.ALL,
+        },
       }
     );
 

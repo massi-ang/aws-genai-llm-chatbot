@@ -11,6 +11,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as sfn from "aws-cdk-lib/aws-stepfunctions";
+import { NagSuppressions } from "cdk-nag";
 
 export interface AuroraPgVectorProps {
   readonly config: SystemConfig;
@@ -33,6 +34,7 @@ export class AuroraPgVector extends Construct {
       writer: rds.ClusterInstance.serverlessV2("ServerlessInstance"),
       vpc: props.shared.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      iamAuthentication: true,
     });
 
     const databaseSetupFunction = new lambda.Function(
@@ -40,17 +42,13 @@ export class AuroraPgVector extends Construct {
       "DatabaseSetupFunction",
       {
         vpc: props.shared.vpc,
-        code: lambda.Code.fromAsset(
+        code: props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/pgvector-setup")
         ),
         runtime: props.shared.pythonRuntime,
         architecture: props.shared.lambdaArchitecture,
         handler: "index.lambda_handler",
-        layers: [
-          props.shared.powerToolsLayer,
-          props.shared.commonLayer.layer,
-          props.shared.pythonSDKLayer,
-        ],
+        layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
         timeout: cdk.Duration.minutes(5),
         logRetention: logs.RetentionDays.ONE_WEEK,
         environment: {
@@ -98,5 +96,21 @@ export class AuroraPgVector extends Construct {
 
     this.database = dbCluster;
     this.createAuroraWorkspaceWorkflow = createWorkflow.stateMachine;
+
+    /**
+     * CDK NAG suppression
+     */
+    NagSuppressions.addResourceSuppressions(dbCluster, [
+      {
+        id: "AwsSolutions-RDS10",
+        reason:
+          "Deletion protection disabled to allow deletion as part of the CloudFormation stack.",
+      },
+      {
+        id: "AwsSolutions-RDS2",
+        reason:
+          "Encryption cannot be enabled on an unencrypted DB Cluster, therefore enabling will destroy existing data. Docs provide instructions for users requiring it.",
+      },
+    ]);
   }
 }

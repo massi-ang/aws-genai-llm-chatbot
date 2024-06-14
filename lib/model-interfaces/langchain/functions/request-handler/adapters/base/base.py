@@ -5,11 +5,14 @@ from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain, ConversationChain
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts.prompt import PromptTemplate
-from genai_core.langchain import WorkspaceRetriever, DynamoDBChatMessageHistory
 from langchain.chains.conversational_retrieval.prompts import (
     QA_PROMPT,
     CONDENSE_QUESTION_PROMPT,
 )
+from typing import Dict, List, Any
+
+from genai_core.langchain import WorkspaceRetriever, DynamoDBChatMessageHistory
+from genai_core.types import ChatbotMode
 
 logger = Logger()
 
@@ -18,14 +21,26 @@ class Mode(Enum):
     CHAIN = "chain"
 
 
+class LLMStartHandler(BaseCallbackHandler):
+    prompts = []
+
+    def on_llm_start(
+        self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any
+    ) -> Any:
+        logger.info(prompts)
+        self.prompts.append(prompts)
+
+
 class ModelAdapter:
-    def __init__(self, session_id, user_id, mode="chain", model_kwargs={}):
+    def __init__(
+        self, session_id, user_id, mode=ChatbotMode.CHAIN.value, model_kwargs={}
+    ):
         self.session_id = session_id
         self.user_id = user_id
         self._mode = mode
         self.model_kwargs = model_kwargs
 
-        self.callback_handler = BaseCallbackHandler()
+        self.callback_handler = LLMStartHandler()
         self.__bind_callbacks()
 
         self.chat_history = self.get_chat_history()
@@ -55,11 +70,11 @@ class ModelAdapter:
             user_id=self.user_id,
         )
 
-    def get_memory(self, output_key=None):
+    def get_memory(self, output_key=None, return_messages=False):
         return ConversationBufferMemory(
             memory_key="chat_history",
             chat_memory=self.chat_history,
-            return_messages=True,
+            return_messages=return_messages,
             output_key=output_key,
         )
 
@@ -70,15 +85,8 @@ class ModelAdapter:
         {chat_history}
 
         Question: {input}"""
-        input_variables = ["input", "chat_history"]
-        prompt_template_args = {
-            "chat_history": "{chat_history}",
-            "input_variables": input_variables,
-            "template": template,
-        }
-        prompt_template = PromptTemplate(**prompt_template_args)
 
-        return prompt_template
+        return PromptTemplate.from_template(template)
 
     def get_condense_question_prompt(self):
         return CONDENSE_QUESTION_PROMPT
@@ -90,14 +98,17 @@ class ModelAdapter:
         if not self.llm:
             raise ValueError("llm must be set")
 
+        self.callback_handler.prompts = []
+
         if workspace_id:
             conversation = ConversationalRetrievalChain.from_llm(
                 self.llm,
                 WorkspaceRetriever(workspace_id=workspace_id),
+                condense_question_llm=self.get_llm({"streaming": False}),
                 condense_question_prompt=self.get_condense_question_prompt(),
                 combine_docs_chain_kwargs={"prompt": self.get_qa_prompt()},
                 return_source_documents=True,
-                memory=self.get_memory(output_key="answer"),
+                memory=self.get_memory(output_key="answer", return_messages=True),
                 verbose=True,
                 callbacks=[self.callback_handler],
             )
@@ -119,6 +130,7 @@ class ModelAdapter:
                 "userId": self.user_id,
                 "workspaceId": workspace_id,
                 "documents": documents,
+                "prompts": self.callback_handler.prompts,
             }
 
             self.chat_history.add_metadata(metadata)
@@ -147,6 +159,7 @@ class ModelAdapter:
             "sessionId": self.session_id,
             "userId": self.user_id,
             "documents": [],
+            "prompts": self.callback_handler.prompts,
         }
 
         self.chat_history.add_metadata(metadata)
@@ -163,7 +176,7 @@ class ModelAdapter:
         logger.debug(f"workspace_id {workspace_id}")
         logger.debug(f"mode: {self._mode}")
 
-        if self._mode == "chain":
+        if self._mode == ChatbotMode.CHAIN.value:
             return self.run_with_chain(prompt, workspace_id)
 
         raise ValueError(f"unknown mode {self._mode}")

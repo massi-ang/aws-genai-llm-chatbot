@@ -1,9 +1,8 @@
 import os
-import boto3
 import json
 import uuid
 from datetime import datetime
-from adapters.registry import registry
+from genai_core.registry import registry
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities import parameters
 from aws_lambda_powertools.utilities.batch import BatchProcessor, EventType
@@ -11,26 +10,23 @@ from aws_lambda_powertools.utilities.batch.exceptions import BatchProcessingErro
 from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
+import adapters
+from genai_core.utils.websocket import send_to_client
+from genai_core.types import ChatbotAction
+
 processor = BatchProcessor(event_type=EventType.SQS)
 tracer = Tracer()
 logger = Logger()
 
 AWS_REGION = os.environ["AWS_REGION"]
-MESSAGES_TOPIC_ARN = os.environ["MESSAGES_TOPIC_ARN"]
 API_KEYS_SECRETS_ARN = os.environ["API_KEYS_SECRETS_ARN"]
 
-sns = boto3.client("sns", region_name=AWS_REGION)
 sequence_number = 0
 
 
-def send_to_client(detail):
-    sns.publish(
-        TopicArn=MESSAGES_TOPIC_ARN,
-        Message=json.dumps(detail),
-    )
-
-
-def on_llm_new_token(connection_id, user_id, session_id, self, token, run_id, *args, **kwargs):
+def on_llm_new_token(user_id, session_id, self, token, run_id, *args, **kwargs):
+    if token is None or len(token) == 0:
+        return
     global sequence_number
     sequence_number += 1
     run_id = str(run_id)
@@ -38,9 +34,7 @@ def on_llm_new_token(connection_id, user_id, session_id, self, token, run_id, *a
     send_to_client(
         {
             "type": "text",
-            "action": "llm_new_token",
-            "direction": "OUT",
-            "connectionId": connection_id,
+            "action": ChatbotAction.LLM_NEW_TOKEN.value,
             "userId": user_id,
             "timestamp": str(int(round(datetime.now().timestamp()))),
             "data": {
@@ -55,8 +49,24 @@ def on_llm_new_token(connection_id, user_id, session_id, self, token, run_id, *a
     )
 
 
+def handle_heartbeat(record):
+    user_id = record["userId"]
+    session_id = record["data"]["sessionId"]
+
+    send_to_client(
+        {
+            "type": "text",
+            "action": ChatbotAction.HEARTBEAT.value,
+            "timestamp": str(int(round(datetime.now().timestamp()))),
+            "userId": user_id,
+            "data": {
+                "sessionId": session_id,
+            },
+        }
+    )
+
+
 def handle_run(record):
-    connection_id = record["connectionId"]
     user_id = record["userId"]
     data = record["data"]
     provider = data["provider"]
@@ -72,7 +82,7 @@ def handle_run(record):
     adapter = registry.get_adapter(f"{provider}.{model_id}")
 
     adapter.on_llm_new_token = lambda *args, **kwargs: on_llm_new_token(
-        connection_id, user_id, session_id, *args, **kwargs
+        user_id, session_id, *args, **kwargs
     )
 
     model = adapter(
@@ -86,7 +96,6 @@ def handle_run(record):
     response = model.run(
         prompt=prompt,
         workspace_id=workspace_id,
-        tools=[],
     )
 
     logger.info(response)
@@ -94,9 +103,7 @@ def handle_run(record):
     send_to_client(
         {
             "type": "text",
-            "action": "final_response",
-            "direction": "OUT",
-            "connectionId": connection_id,
+            "action": ChatbotAction.FINAL_RESPONSE.value,
             "timestamp": str(int(round(datetime.now().timestamp()))),
             "userId": user_id,
             "data": response,
@@ -111,8 +118,10 @@ def record_handler(record: SQSRecord):
     detail: dict = json.loads(message["Message"])
     logger.info(detail)
 
-    if detail["action"] == "run":
+    if detail["action"] == ChatbotAction.RUN.value:
         handle_run(detail)
+    elif detail["action"] == ChatbotAction.HEARTBEAT.value:
+        handle_heartbeat(detail)
 
 
 def handle_failed_records(records):
@@ -122,7 +131,6 @@ def handle_failed_records(records):
         message: dict = json.loads(payload)
         detail: dict = json.loads(message["Message"])
         logger.info(detail)
-        connection_id = detail["connectionId"]
         user_id = detail["userId"]
         data = detail.get("data", {})
         session_id = data.get("sessionId", "")
@@ -132,7 +140,6 @@ def handle_failed_records(records):
                 "type": "text",
                 "action": "error",
                 "direction": "OUT",
-                "connectionId": connection_id,
                 "userId": user_id,
                 "timestamp": str(int(round(datetime.now().timestamp()))),
                 "data": {

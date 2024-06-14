@@ -6,6 +6,7 @@ import {
   Form,
   FormField,
   Header,
+  HelpPanel,
   Link,
   Select,
   SelectProps,
@@ -15,18 +16,15 @@ import {
 } from "@cloudscape-design/components";
 import BaseAppLayout from "../../../components/base-app-layout";
 import useOnFollow from "../../../common/hooks/use-on-follow";
-import { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useState } from "react";
 import { AppContext } from "../../../common/app-context";
 import { useForm } from "../../../common/hooks/use-form";
-import {
-  CrossEncoderModelItem,
-  LoadingStatus,
-  ResultValue,
-} from "../../../common/types";
+import { LoadingStatus } from "../../../common/types";
 import { ApiClient } from "../../../common/api-client/api-client";
 import { OptionsHelper } from "../../../common/helpers/options-helper";
 import { Utils } from "../../../common/utils";
-import React from "react";
+import { CHATBOT_NAME } from "../../../common/constants";
+import { CrossEncoderData } from "../../../API";
 
 export default function CrossEncoders() {
   const onFollow = useOnFollow();
@@ -36,7 +34,7 @@ export default function CrossEncoders() {
   const [crossEncoderModelsStatus, setCrossEncoderModelsStatus] =
     useState<LoadingStatus>("loading");
   const [crossEncoderModels, setCrossEncoderModels] = useState<
-    CrossEncoderModelItem[]
+    CrossEncoderData[]
   >([]);
   const [ranking, setRanking] = useState<
     | {
@@ -102,12 +100,14 @@ export default function CrossEncoders() {
 
     (async () => {
       const apiClient = new ApiClient(appContext);
-      const result = await apiClient.crossEncoders.getModels();
+      try {
+        const result = await apiClient.crossEncoders.getModels();
 
-      if (ResultValue.ok(result)) {
-        setCrossEncoderModels(result.data);
+        console.log(result?.data?.listCrossEncoders);
+        setCrossEncoderModels(result?.data?.listCrossEncoders!);
         setCrossEncoderModelsStatus("finished");
-      } else {
+      } catch (error) {
+        console.error(Utils.getErrorMessage(error));
         setCrossEncoderModelsStatus("error");
       }
     })();
@@ -158,18 +158,19 @@ export default function CrossEncoders() {
       data.passages.map((p) => p.trim())
     );
 
-    if (ResultValue.ok(result)) {
-      const passages = data.passages
-        .map((passage, index) => ({
+    console.log(result);
+    if (result.errors === undefined) {
+      const passages = result
+        .data!.rankPassages!.map((rank, index) => ({
           index,
-          passage,
-          score: result.data[index],
+          passage: rank.passage,
+          score: rank.score,
         }))
         .sort((a, b) => b.score - a.score);
 
       setRanking(passages);
-    } else if (result.message) {
-      setGlobalError(Utils.getErrorMessage(result));
+    } else {
+      setGlobalError(result.errors.map((x) => x.message).join(","));
     }
 
     setSubmitting(false);
@@ -189,7 +190,7 @@ export default function CrossEncoders() {
           onFollow={onFollow}
           items={[
             {
-              text: "AWS GenAI Chatbot",
+              text: CHATBOT_NAME,
               href: "/",
             },
             {
@@ -255,6 +256,7 @@ export default function CrossEncoders() {
                         onChange={({ detail: { selectedOption } }) =>
                           onChange({ crossEncoderModel: selectedOption })
                         }
+                        empty={<div>No cross-encoder models found</div>}
                       />
                     </FormField>
                   </SpaceBetween>
@@ -351,6 +353,11 @@ export default function CrossEncoders() {
             )}
           </SpaceBetween>
         </ContentLayout>
+      }
+      info={
+        <HelpPanel header={<Header variant="h3">Cross-Encoders</Header>}>
+          <p>Cross-encoders are ...</p>
+        </HelpPanel>
       }
     />
   );

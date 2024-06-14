@@ -8,20 +8,23 @@ import {
   Input,
   SegmentedControl,
   SpaceBetween,
+  Toggle,
+  Multiselect,
 } from "@cloudscape-design/components";
-import { AddDataData } from "./types";
+import { AddDataData, SelectOption, multiselectOptions } from "./types";
+import { generateSelectedOptions } from "./utils";
 import { useForm } from "../../../common/hooks/use-form";
 import { useContext, useState } from "react";
 import { AppContext } from "../../../common/app-context";
 import { useNavigate } from "react-router-dom";
 import { Utils } from "../../../common/utils";
-import { ResultValue, WorkspaceItem } from "../../../common/types";
 import { ApiClient } from "../../../common/api-client/api-client";
+import { Workspace } from "../../../API";
 
 export interface CrawlWebsiteProps {
   data: AddDataData;
   validate: () => boolean;
-  selectedWorkspace?: WorkspaceItem;
+  selectedWorkspace?: Workspace;
   submitting: boolean;
   setSubmitting: (submitting: boolean) => void;
 }
@@ -30,6 +33,9 @@ interface CrawlWebisteData {
   urlType: "website" | "sitemap" | string;
   websiteUrl: string;
   sitemapUrl: string;
+  followLinks: boolean;
+  limit: number;
+  contentTypes: (string | undefined)[];
 }
 
 export default function CrawlWebsite(props: CrawlWebsiteProps) {
@@ -44,6 +50,9 @@ export default function CrawlWebsite(props: CrawlWebsiteProps) {
         urlType: "website",
         websiteUrl: "",
         sitemapUrl: "",
+        followLinks: true,
+        limit: 250,
+        contentTypes: ["text/html"],
       };
     },
     validate: (form) => {
@@ -65,6 +74,14 @@ export default function CrawlWebsite(props: CrawlWebsiteProps) {
         }
       }
 
+      if (form.limit < 1 || form.limit > 1000) {
+        errors.limit = "Page limit should be between 1 and 1000";
+      }
+      
+      if (form.contentTypes.length === 0) {
+        errors.contentTypes = "At least one content type must be selected.";
+      }
+
       return errors;
     },
   });
@@ -82,13 +99,17 @@ export default function CrawlWebsite(props: CrawlWebsiteProps) {
 
     const apiClient = new ApiClient(appContext);
     const isSitemap = data.urlType === "sitemap";
-    const result = await apiClient.documents.addWebsiteDocument(
-      props.data.workspace.value,
-      isSitemap,
-      isSitemap ? data.sitemapUrl : data.websiteUrl
-    );
+    const contentTypesToUse = data.contentTypes.filter((ct): ct is string => ct !== undefined);
+    try {
+      await apiClient.documents.addWebsiteDocument(
+        props.data.workspace.value,
+        isSitemap,
+        isSitemap ? data.sitemapUrl : data.websiteUrl,
+        data.followLinks,
+        data.limit,
+        contentTypesToUse
+      );
 
-    if (ResultValue.ok(result)) {
       setFlashbarItem({
         type: "success",
         content: "Website added successfully",
@@ -103,11 +124,26 @@ export default function CrawlWebsite(props: CrawlWebsiteProps) {
       });
 
       onChange({ websiteUrl: "", sitemapUrl: "" }, true);
-    } else {
-      setGlobalError(Utils.getErrorMessage(result));
+    } catch (error: any) {
+      setGlobalError(Utils.getErrorMessage(error));
+      console.error(Utils.getErrorMessage(error));
     }
 
     props.setSubmitting(false);
+  };
+  
+  const handleContentTypeChange = (selectedOptions: ReadonlyArray<SelectOption>) => {
+    const options: SelectOption[] = selectedOptions.map(option => {
+      if (option.value === undefined) {
+        throw new Error(`Option value cannot be undefined`);
+      }
+      return {
+        label: option.label,
+        value: option.value,
+        description: option.description
+      };
+    });
+    onChange({ contentTypes: options.map(option => option.value) });
   };
 
   const hasReadyWorkspace =
@@ -179,6 +215,47 @@ export default function CrawlWebsite(props: CrawlWebsiteProps) {
                 />
               </FormField>
             )}
+            <FormField
+              label="Follow Links"
+              description="Follow links on the website to crawl more pages"
+              errorText={errors.followLinks}
+            >
+              <Toggle
+                disabled={props.submitting}
+                checked={data.followLinks}
+                onChange={({ detail: { checked } }) =>
+                  onChange({ followLinks: checked })
+                }
+              >
+                Follow
+              </Toggle>
+            </FormField>
+            <FormField
+              label="Page Limit"
+              errorText={errors.limit}
+              description="Maximum number of pages to crawl"
+            >
+              <Input
+                type="number"
+                disabled={props.submitting}
+                value={data.limit.toString()}
+                onChange={({ detail: { value } }) =>
+                  onChange({ limit: parseInt(value) })
+                }
+              />
+            </FormField>
+            <FormField
+              label="Enabled Content Types"
+              errorText={errors.contentTypes}
+              description="Content Types to Enable for crawlingl"
+            >
+            <Multiselect
+              disabled={props.submitting}
+              selectedOptions={generateSelectedOptions(data.contentTypes)}
+              options={multiselectOptions}
+              onChange={({ detail }) => handleContentTypeChange(detail.selectedOptions)}
+            />
+            </FormField>
           </SpaceBetween>
         </Container>
         {flashbarItem !== null && <Flashbar items={[flashbarItem]} />}

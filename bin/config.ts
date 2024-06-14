@@ -1,8 +1,4 @@
-import {
-  SupportedRegion,
-  SupportedSageMakerLLM,
-  SystemConfig,
-} from "../lib/shared/types";
+import { SupportedRegion, SystemConfig } from "../lib/shared/types";
 import { existsSync, readFileSync } from "fs";
 
 export function getConfig(): SystemConfig {
@@ -12,13 +8,21 @@ export function getConfig(): SystemConfig {
   // Default config
   return {
     prefix: "",
+    /* vpc: {
+       vpcId: "vpc-00000000000000000",
+       createVpcEndpoints: true,
+       vpcDefaultSecurityGroup: "sg-00000000000"
+    },*/
+    privateWebsite: false,
+    certificate : "",
+    cfGeoRestrictEnable: false,
+    cfGeoRestrictList: [],
     bedrock: {
       enabled: true,
       region: SupportedRegion.US_EAST_1,
-      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     },
     llms: {
-      // sagemaker: [SupportedSageMakerLLM.FalconLite]
+      // sagemaker: [SupportedSageMakerModels.FalconLite]
       sagemaker: [],
     },
     rag: {
@@ -33,13 +37,13 @@ export function getConfig(): SystemConfig {
         kendra: {
           enabled: false,
           createIndex: false,
+          enterprise: false
         },
       },
       embeddingsModels: [
         {
           provider: "sagemaker",
           name: "intfloat/multilingual-e5-large",
-          default: true,
           dimensions: 1024,
         },
         {
@@ -49,13 +53,25 @@ export function getConfig(): SystemConfig {
         },
         {
           provider: "bedrock",
-          name: "amazon.titan-e1t-medium",
-          dimensions: 4096,
+          name: "amazon.titan-embed-text-v1",
+          dimensions: 1536,
+        },
+        //Support for inputImage is not yet implemented for amazon.titan-embed-image-v1
+        {
+          provider: "bedrock",
+          name: "amazon.titan-embed-image-v1",
+          dimensions: 1024,
         },
         {
           provider: "bedrock",
-          name: "amazon.titan-embed-text-v1",
-          dimensions: 1536,
+          name: "cohere.embed-english-v3",
+          dimensions: 1024,
+        },
+        {
+          provider: "bedrock",
+          name: "cohere.embed-multilingual-v3",
+          dimensions: 1024,
+          default: true,
         },
         {
           provider: "openai",

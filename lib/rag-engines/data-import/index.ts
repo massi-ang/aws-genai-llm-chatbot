@@ -3,24 +3,27 @@ import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { SystemConfig } from "../../shared/types";
 import { Shared } from "../../shared";
-import { BatchJobs } from "./batch-jobs";
+import { FileImportBatchJob } from "./file-import-batch-job";
 import { RagDynamoDBTables } from "../rag-dynamodb-tables";
 import { FileImportWorkflow } from "./file-import-workflow";
 import { WebsiteCrawlingWorkflow } from "./website-crawling-workflow";
+import { RssSubscription } from "./rss-subscription";
 import { OpenSearchVector } from "../opensearch-vector";
 import { KendraRetrieval } from "../kendra-retrieval";
+import { SageMakerRagModels } from "../sagemaker-rag-models";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as sagemaker from "aws-cdk-lib/aws-sagemaker";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as s3Notifications from "aws-cdk-lib/aws-s3-notifications";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as sfn from "aws-cdk-lib/aws-stepfunctions";
+import { NagSuppressions } from "cdk-nag";
+import { WebCrawlerBatchJob } from "./web-crawler-batch-job";
 
 export interface DataImportProps {
   readonly config: SystemConfig;
@@ -29,11 +32,11 @@ export interface DataImportProps {
   readonly ragDynamoDBTables: RagDynamoDBTables;
   readonly openSearchVector?: OpenSearchVector;
   readonly kendraRetrieval?: KendraRetrieval;
-  readonly sageMakerRagModelsEndpoint?: sagemaker.CfnEndpoint;
+  readonly sageMakerRagModels?: SageMakerRagModels;
   readonly workspacesTable: dynamodb.Table;
   readonly documentsTable: dynamodb.Table;
   readonly workspacesByObjectTypeIndexName: string;
-  readonly documentsByCompountKeyIndexName: string;
+  readonly documentsByCompoundKeyIndexName: string;
 }
 
 export class DataImport extends Construct {
@@ -42,24 +45,33 @@ export class DataImport extends Construct {
   public readonly ingestionQueue: sqs.Queue;
   public readonly fileImportWorkflow: sfn.StateMachine;
   public readonly websiteCrawlingWorkflow: sfn.StateMachine;
-
+  public readonly rssIngestorFunction: lambda.Function;
   constructor(scope: Construct, id: string, props: DataImportProps) {
     super(scope, id);
 
-    const ingestionDealLetterQueue = new sqs.Queue(
+    const ingestionDeadLetterQueue = new sqs.Queue(
       this,
       "IngestionDeadLetterQueue",
       {
         visibilityTimeout: cdk.Duration.seconds(900),
+        enforceSSL: true,
       }
     );
 
     const ingestionQueue = new sqs.Queue(this, "IngestionQueue", {
       visibilityTimeout: cdk.Duration.seconds(900),
+      enforceSSL: true,
       deadLetterQueue: {
-        queue: ingestionDealLetterQueue,
+        queue: ingestionDeadLetterQueue,
         maxReceiveCount: 3,
       },
+    });
+
+    const uploadLogsBucket = new s3.Bucket(this, "UploadLogsBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      enforceSSL: true,
     });
 
     const uploadBucket = new s3.Bucket(this, "UploadBucket", {
@@ -67,6 +79,8 @@ export class DataImport extends Construct {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       transferAcceleration: true,
+      enforceSSL: true,
+      serverAccessLogsBucket: uploadLogsBucket,
       cors: [
         {
           allowedHeaders: ["*"],
@@ -83,10 +97,19 @@ export class DataImport extends Construct {
       ],
     });
 
+    const processingLogsBucket = new s3.Bucket(this, "ProcessingLogsBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      enforceSSL: true,
+    });
+
     const processingBucket = new s3.Bucket(this, "ProcessingBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      enforceSSL: true,
+      serverAccessLogsBucket: processingLogsBucket,
     });
 
     uploadBucket.addEventNotification(
@@ -99,12 +122,20 @@ export class DataImport extends Construct {
       new s3Notifications.SqsDestination(ingestionQueue)
     );
 
-    const batchJobs = new BatchJobs(this, "BatchJobs", {
-      shared: props.shared,
-      config: props.config,
-      uploadBucket,
-      processingBucket,
-    });
+    const fileImportBatchJob = new FileImportBatchJob(
+      this,
+      "FileImportBatchJob",
+      {
+        shared: props.shared,
+        config: props.config,
+        uploadBucket,
+        processingBucket,
+        auroraDatabase: props.auroraDatabase,
+        ragDynamoDBTables: props.ragDynamoDBTables,
+        sageMakerRagModelsEndpoint: props.sageMakerRagModels?.model.endpoint,
+        openSearchVector: props.openSearchVector,
+      }
+    );
 
     const fileImportWorkflow = new FileImportWorkflow(
       this,
@@ -112,11 +143,22 @@ export class DataImport extends Construct {
       {
         shared: props.shared,
         config: props.config,
-        batchJobs,
+        fileImportBatchJob,
+        ragDynamoDBTables: props.ragDynamoDBTables,
+      }
+    );
+
+    const webCrawlerBatchJob = new WebCrawlerBatchJob(
+      this,
+      "WebCrawlerBatchJob",
+      {
+        shared: props.shared,
+        config: props.config,
+        uploadBucket,
         processingBucket,
         auroraDatabase: props.auroraDatabase,
         ragDynamoDBTables: props.ragDynamoDBTables,
-        sageMakerRagModelsEndpoint: props.sageMakerRagModelsEndpoint,
+        sageMakerRagModelsEndpoint: props.sageMakerRagModels?.model.endpoint,
         openSearchVector: props.openSearchVector,
       }
     );
@@ -127,16 +169,21 @@ export class DataImport extends Construct {
       {
         shared: props.shared,
         config: props.config,
-        processingBucket,
-        auroraDatabase: props.auroraDatabase,
+        webCrawlerBatchJob,
         ragDynamoDBTables: props.ragDynamoDBTables,
-        sageMakerRagModelsEndpoint: props.sageMakerRagModelsEndpoint,
-        openSearchVector: props.openSearchVector,
       }
     );
 
+    const rssSubscription = new RssSubscription(this, "RssSubscription", {
+      shared: props.shared,
+      config: props.config,
+      processingBucket: processingBucket,
+      ragDynamoDBTables: props.ragDynamoDBTables,
+      websiteCrawlerStateMachine: websiteCrawlingWorkflow.stateMachine,
+    });
+
     const uploadHandler = new lambda.Function(this, "UploadHandler", {
-      code: lambda.Code.fromAsset(
+      code: props.shared.sharedCode.bundleWithLambdaAsset(
         path.join(__dirname, "./functions/upload-handler")
       ),
       handler: "index.lambda_handler",
@@ -146,15 +193,9 @@ export class DataImport extends Construct {
       memorySize: 512,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: logs.RetentionDays.ONE_WEEK,
-      layers: [
-        props.shared.powerToolsLayer,
-        props.shared.commonLayer.layer,
-        props.shared.pythonSDKLayer,
-      ],
+      layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
       vpc: props.shared.vpc,
-      vpcSubnets: props.shared.vpc.selectSubnets({
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-      }),
+      vpcSubnets: props.shared.vpc.privateSubnets as ec2.SubnetSelection,
       environment: {
         ...props.shared.defaultEnvironmentVariables,
         CONFIG_PARAMETER_NAME: props.shared.configParameter.parameterName,
@@ -166,9 +207,9 @@ export class DataImport extends Construct {
           props.workspacesByObjectTypeIndexName ?? "",
         DOCUMENTS_TABLE_NAME: props.documentsTable.tableName ?? "",
         DOCUMENTS_BY_COMPOUND_KEY_INDEX_NAME:
-          props.documentsByCompountKeyIndexName ?? "",
+          props.documentsByCompoundKeyIndexName ?? "",
         SAGEMAKER_RAG_MODELS_ENDPOINT:
-          props.sageMakerRagModelsEndpoint?.attrEndpointName ?? "",
+          props.sageMakerRagModels?.model.endpoint.attrEndpointName ?? "",
         FILE_IMPORT_WORKFLOW_ARN:
           fileImportWorkflow?.stateMachine.stateMachineArn ?? "",
         DEFAULT_KENDRA_S3_DATA_SOURCE_BUCKET_NAME:
@@ -207,5 +248,19 @@ export class DataImport extends Construct {
     this.ingestionQueue = ingestionQueue;
     this.fileImportWorkflow = fileImportWorkflow.stateMachine;
     this.websiteCrawlingWorkflow = websiteCrawlingWorkflow.stateMachine;
+    this.rssIngestorFunction = rssSubscription.rssIngestorFunction;
+
+    /**
+     * CDK NAG suppression
+     */
+    NagSuppressions.addResourceSuppressions(
+      [uploadLogsBucket, processingLogsBucket],
+      [
+        {
+          id: "AwsSolutions-S1",
+          reason: "Logging bucket does not require it's own access logs.",
+        },
+      ]
+    );
   }
 }

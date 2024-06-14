@@ -5,6 +5,9 @@ import {
   ThemeProvider,
   defaultDarkModeOverride,
   useTheme,
+  Button,
+  Divider,
+  View,
 } from "@aws-amplify/ui-react";
 import App from "../app";
 import { Amplify, Auth } from "aws-amplify";
@@ -14,6 +17,7 @@ import { Alert, StatusIndicator } from "@cloudscape-design/components";
 import { StorageHelper } from "../common/helpers/storage-helper";
 import { Mode } from "@cloudscape-design/global-styles";
 import "@aws-amplify/ui-react/styles.css";
+import { CHATBOT_NAME } from "../common/constants";
 
 export default function AppConfigured() {
   const { tokens } = useTheme();
@@ -27,8 +31,14 @@ export default function AppConfigured() {
         const result = await fetch("/aws-exports.json");
         const awsExports = await result.json();
         const currentConfig = Amplify.configure(awsExports) as AppConfig | null;
+        
+        // Extract the query string from the current URL
+        const queryString = window.location.search;
+        
+        // Use URLSearchParams to work with the query string easily
+        const urlParams = new URLSearchParams(queryString);
 
-        if (currentConfig?.config.auth_federated_provider?.auto_redirect) {
+        if (currentConfig?.config.auth_federated_provider?.auto_redirect && urlParams.get('loginlocal') != 'true') {
           let authenticated = false;
           try {
             const user = await Auth.currentAuthenticatedUser();
@@ -143,14 +153,36 @@ export default function AppConfigured() {
           components={{
             SignIn: {
               Header: () => {
-                return (
-                  <Heading
-                    padding={`${tokens.space.xl} 0 0 ${tokens.space.xl}`}
-                    level={3}
-                  >
-                    AWS GenAI Chatbot
-                  </Heading>
-                );
+                if (config.config.auth_federated_provider) {
+                  const signInWithCustomProvider = () => {
+                    Auth.federatedSignIn({ customProvider: config.config.auth_federated_provider?.name || "" });
+                  };
+                  return (
+                    <Heading
+                      padding={`${tokens.space.xl} 0 0 ${tokens.space.xl}`}
+                      level={3}
+                    >
+                      {CHATBOT_NAME}
+                      <View as="div" paddingTop="1rem" paddingBottom="1rem">
+                      <Button onClick={signInWithCustomProvider} variation="primary">
+                        Sign in with {config.config.auth_federated_provider?.name}
+                      </Button>
+                      </View>
+                      <Divider label="OR" />
+                    </Heading>
+                  );
+                }
+                else
+                {
+                  return (
+                    <Heading
+                      padding={`${tokens.space.xl} 0 0 ${tokens.space.xl}`}
+                      level={3}
+                    >
+                      {CHATBOT_NAME}
+                    </Heading>
+                  );
+                }
               },
             },
           }}

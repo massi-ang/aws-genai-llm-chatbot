@@ -3,6 +3,7 @@ import * as sagemaker from "aws-cdk-lib/aws-sagemaker";
 import { Construct } from "constructs";
 
 import { SageMakerModelProps, ModelPackageConfig } from "./types";
+import { NagSuppressions } from "cdk-nag";
 
 export function deployPackageModel(
   scope: Construct,
@@ -55,10 +56,24 @@ export function deployPackageModel(
 
   const endpoint = new sagemaker.CfnEndpoint(scope, modelId, {
     endpointConfigName: endpointConfig.getAtt("EndpointConfigName").toString(),
-    endpointName: modelId,
+    endpointName: modelId.split("/").join("-").split(".").join("-"),
   });
 
   endpoint.addDependency(endpointConfig);
+
+  /**
+   * CDK NAG suppression
+   */
+  NagSuppressions.addResourceSuppressions(executionRole, [
+    {
+      id: "AwsSolutions-IAM4",
+      reason: "Gives user ability to deploy and delete endpoints from the UI.",
+    },
+    {
+      id: "AwsSolutions-IAM5",
+      reason: "Gives user ability to deploy and delete endpoints from the UI.",
+    },
+  ]);
 
   return { model, endpoint };
 }
