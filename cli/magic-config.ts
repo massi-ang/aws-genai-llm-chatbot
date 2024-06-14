@@ -13,31 +13,34 @@ import {
 } from "../lib/shared/types";
 import { LIB_VERSION } from "./version.js";
 import * as fs from "fs";
-import { AWSCronValidator } from "./aws-cron-validator"
-import { tz } from 'moment-timezone';
-import { getData } from 'country-list';
-import { randomBytes } from 'crypto';
-import { StringUtils } from 'turbocommons-ts';
+import { exec } from "child_process";
+import { CodeBuild } from "@aws-sdk/client-codebuild";
+import { CloudWatchLogs } from "@aws-sdk/client-cloudwatch-logs";
+import { AWSCronValidator } from "./aws-cron-validator";
+import { tz } from "moment-timezone";
+import { getData } from "country-list";
+import { randomBytes } from "crypto";
+import { StringUtils } from "turbocommons-ts";
 
 function getTimeZonesWithCurrentTime(): { message: string; name: string }[] {
-    const timeZones = tz.names(); // Get a list of all timezones
-    const timeZoneData = timeZones.map(zone => {
-        // Get current time in each timezone
-        const currentTime = tz(zone).format('YYYY-MM-DD HH:mm');
-        return { message: `${zone}: ${currentTime}`, name: zone };
-    });
-    return timeZoneData;
+  const timeZones = tz.names(); // Get a list of all timezones
+  const timeZoneData = timeZones.map((zone) => {
+    // Get current time in each timezone
+    const currentTime = tz(zone).format("YYYY-MM-DD HH:mm");
+    return { message: `${zone}: ${currentTime}`, name: zone };
+  });
+  return timeZoneData;
 }
 
 function getCountryCodesAndNames(): { message: string; name: string }[] {
-    // Use country-list to get an array of countries with their codes and names
-    const countries = getData();
+  // Use country-list to get an array of countries with their codes and names
+  const countries = getData();
 
-    // Map the country data to match the desired output structure
-    const countryInfo = countries.map(({ code, name }) => {
-        return { message: `${name} (${code})`, name: code };
-    });
-    return countryInfo;
+  // Map the country data to match the desired output structure
+  const countryInfo = countries.map(({ code, name }) => {
+    return { message: `${name} (${code})`, name: code };
+  });
+  return countryInfo;
 }
 
 function isValidDate(dateString: string): boolean {
@@ -55,10 +58,14 @@ function isValidDate(dateString: string): boolean {
 
   // Check the date validity
   const date = new Date(year, month, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) {
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
     return false;
   }
-  
+
   // Check if the date is in the future compared to the current date at 00:00:00
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -74,9 +81,13 @@ const cfCountries = getCountryCodesAndNames();
 
 const iamRoleRegExp = RegExp(/arn:aws:iam::\d+:role\/[\w-_]+/);
 const acmCertRegExp = RegExp(/arn:aws:acm:[\w-_]+:\d+:certificate\/[\w-_]+/);
-const cfAcmCertRegExp = RegExp(/arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/);
+const cfAcmCertRegExp = RegExp(
+  /arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/
+);
 const kendraIdRegExp = RegExp(/^\w{8}-\w{4}-\w{4}-\w{4}-\w{12}$/);
-const secretManagerArnRegExp = RegExp(/arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/);
+const secretManagerArnRegExp = RegExp(
+  /arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/
+);
 
 const embeddingModels = [
   {
@@ -141,34 +152,49 @@ const embeddingModels = [
       options.certificate = config.certificate;
       options.domain = config.domain;
       options.cognitoFederationEnabled = config.cognitoFederation?.enabled;
-      options.cognitoCustomProviderName = config.cognitoFederation?.customProviderName;
-      options.cognitoCustomProviderType = config.cognitoFederation?.customProviderType;
-      options.cognitoCustomProviderSAMLMetadata = config.cognitoFederation?.customSAML?.metadataDocumentUrl;
-      options.cognitoCustomProviderOIDCClient = config.cognitoFederation?.customOIDC?.OIDCClient;
-      options.cognitoCustomProviderOIDCSecret = config.cognitoFederation?.customOIDC?.OIDCSecret;
-      options.cognitoCustomProviderOIDCIssuerURL = config.cognitoFederation?.customOIDC?.OIDCIssuerURL;
+      options.cognitoCustomProviderName =
+        config.cognitoFederation?.customProviderName;
+      options.cognitoCustomProviderType =
+        config.cognitoFederation?.customProviderType;
+      options.cognitoCustomProviderSAMLMetadata =
+        config.cognitoFederation?.customSAML?.metadataDocumentUrl;
+      options.cognitoCustomProviderOIDCClient =
+        config.cognitoFederation?.customOIDC?.OIDCClient;
+      options.cognitoCustomProviderOIDCSecret =
+        config.cognitoFederation?.customOIDC?.OIDCSecret;
+      options.cognitoCustomProviderOIDCIssuerURL =
+        config.cognitoFederation?.customOIDC?.OIDCIssuerURL;
       options.cognitoAutoRedirect = config.cognitoFederation?.autoRedirect;
       options.cognitoDomain = config.cognitoFederation?.cognitoDomain;
       options.cfGeoRestrictEnable = config.cfGeoRestrictEnable;
       options.cfGeoRestrictList = config.cfGeoRestrictList;
       options.bedrockEnable = config.bedrock?.enabled;
       options.bedrockRegion = config.bedrock?.region;
+      options.bedrockEndpoint = config.bedrock?.endpointUrl;
       options.bedrockRoleArn = config.bedrock?.roleArn;
       options.sagemakerModels = config.llms?.sagemaker ?? [];
       options.enableSagemakerModels = config.llms?.sagemaker
         ? config.llms?.sagemaker.length > 0
         : false;
       options.huggingfaceApiSecretArn = config.llms?.huggingfaceApiSecretArn;
-      options.enableSagemakerModelsSchedule = config.llms?.sagemakerSchedule?.enabled;
+      options.enableSagemakerModelsSchedule =
+        config.llms?.sagemakerSchedule?.enabled;
       options.timezonePicker = config.llms?.sagemakerSchedule?.timezonePicker;
-      options.enableCronFormat = config.llms?.sagemakerSchedule?.enableCronFormat;
-      options.cronSagemakerModelsScheduleStart = config.llms?.sagemakerSchedule?.sagemakerCronStartSchedule;
-      options.cronSagemakerModelsScheduleStop = config.llms?.sagemakerSchedule?.sagemakerCronStopSchedule;
+      options.enableCronFormat =
+        config.llms?.sagemakerSchedule?.enableCronFormat;
+      options.cronSagemakerModelsScheduleStart =
+        config.llms?.sagemakerSchedule?.sagemakerCronStartSchedule;
+      options.cronSagemakerModelsScheduleStop =
+        config.llms?.sagemakerSchedule?.sagemakerCronStopSchedule;
       options.daysForSchedule = config.llms?.sagemakerSchedule?.daysForSchedule;
-      options.scheduleStartTime = config.llms?.sagemakerSchedule?.scheduleStartTime;
-      options.scheduleStopTime = config.llms?.sagemakerSchedule?.scheduleStopTime;
-      options.enableScheduleEndDate = config.llms?.sagemakerSchedule?.enableScheduleEndDate;
-      options.startScheduleEndDate = config.llms?.sagemakerSchedule?.startScheduleEndDate;
+      options.scheduleStartTime =
+        config.llms?.sagemakerSchedule?.scheduleStartTime;
+      options.scheduleStopTime =
+        config.llms?.sagemakerSchedule?.scheduleStopTime;
+      options.enableScheduleEndDate =
+        config.llms?.sagemakerSchedule?.enableScheduleEndDate;
+      options.startScheduleEndDate =
+        config.llms?.sagemakerSchedule?.startScheduleEndDate;
       options.enableRag = config.rag.enabled;
       options.ragsToEnable = Object.keys(config.rag.engines ?? {}).filter(
         (v: string) => (config.rag.engines as any)[v].enabled
@@ -187,7 +213,11 @@ const embeddingModels = [
       options.kendraEnterprise = config.rag.engines.kendra.enterprise;
     }
     try {
-      await processCreateOptions(options);
+      if (await processCreateOptions(options)) {
+        performCloudBuild();
+      } else {
+        console.log("\nRun\n\nnpx cdk deploy\n");
+      }
     } catch (err: any) {
       console.error("Could not complete the operation.");
       console.error(err.message);
@@ -197,6 +227,63 @@ const embeddingModels = [
 
   program.parse(process.argv);
 })();
+
+function performCloudBuild() {
+  let buildProjectName: string;
+  console.log("Deploying build stack...");
+  const cp = exec(
+    "npx cdk deploy AWSGenAIChatBuildStack --require-approval never --ci --no-color",
+    (err, stdout) => {
+      (async () => {
+        if (err) {
+          console.log(stdout);
+          console.log(err);
+          return;
+        }
+        console.log("\nBuilding ", buildProjectName);
+        const cbClient = new CodeBuild();
+        try {
+          const build = await cbClient.startBuild({
+            projectName: buildProjectName,
+          });
+          function checkBuild() {
+            (async () => {
+              if (
+                (
+                  await cbClient.batchGetBuilds({
+                    ids: [build.build?.id ?? ""],
+                  })
+                ).builds?.at(0)?.buildStatus == "IN_PROGRESS"
+              ) {
+                process.stdout.write(".");
+                setTimeout(checkBuild, 1000);
+              } else {
+                console.log("\n");
+                const cwLogs = new CloudWatchLogs();
+                const logs = await cwLogs.filterLogEvents({
+                  logGroupName: `/aws/codebuild/${buildProjectName}`,
+                  startTime: Date.now() - 10 * 60 * 1000,
+                });
+                logs.events?.forEach((e: any) =>
+                  process.stdout.write(e.message ?? "")
+                );
+              }
+            })();
+          }
+          setTimeout(checkBuild, 1000);
+        } catch (err) {
+          console.error(err);
+        }
+      })();
+    }
+  );
+  cp.stdout?.on("data", (data: string) => {
+    process.stdout.write(".");
+    if (data.includes("GenAIChatBuildStack.BuildProjectName")) {
+      buildProjectName = data.split(" = ")[1].split("\n")[0];
+    }
+  });
+}
 
 function createConfig(config: any): void {
   fs.writeFileSync("./bin/config.json", JSON.stringify(config, undefined, 2));
@@ -209,7 +296,7 @@ function createConfig(config: any): void {
  * @param options Options provided via the CLI
  * @returns The complete options
  */
-async function processCreateOptions(options: any): Promise<void> {
+async function processCreateOptions(options: any): Promise<boolean> {
   let questions = [
     {
       type: "input",
@@ -221,7 +308,8 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "confirm",
       name: "existingVpc",
-      message: "Do you want to use existing vpc? (selecting false will create a new vpc)",
+      message:
+        "Do you want to use existing vpc? (selecting false will create a new vpc)",
       initial: options.vpcId ? true : false,
     },
     {
@@ -230,8 +318,10 @@ async function processCreateOptions(options: any): Promise<void> {
       message: "Specify existing VpcId (vpc-xxxxxxxxxxxxxxxxx)",
       initial: options.vpcId,
       validate(vpcId: string) {
-        return ((this as any).skipped || RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)) ?
-          true : 'Enter a valid VpcId in vpc-xxxxxxxxxxx format'
+        return (this as any).skipped ||
+          RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)
+          ? true
+          : "Enter a valid VpcId in vpc-xxxxxxxxxxx format";
       },
       skip(): boolean {
         return !(this as any).state.answers.existingVpc;
@@ -260,22 +350,19 @@ async function processCreateOptions(options: any): Promise<void> {
         "Do you want to provide a custom domain name and corresponding certificate arn for the public website ?",
       initial: options.customPublicDomain || false,
       skip(): boolean {
-        return (this as any).state.answers.privateWebsite ;
+        return (this as any).state.answers.privateWebsite;
       },
     },
     {
       type: "input",
       name: "certificate",
       validate(v: string) {
-        if ((this as any).state.answers.privateWebsite)
-        {
+        if ((this as any).state.answers.privateWebsite) {
           const valid = acmCertRegExp.test(v);
           return (this as any).skipped || valid
             ? true
             : "You need to enter an ACM certificate arn";
-        }
-        else
-        {
+        } else {
           const valid = cfAcmCertRegExp.test(v);
           return (this as any).skipped || valid
             ? true
@@ -290,7 +377,10 @@ async function processCreateOptions(options: any): Promise<void> {
       },
       initial: options.certificate,
       skip(): boolean {
-        return !(this as any).state.answers.privateWebsite && !(this as any).state.answers.customPublicDomain;
+        return (
+          !(this as any).state.answers.privateWebsite &&
+          !(this as any).state.answers.customPublicDomain
+        );
       },
     },
     {
@@ -309,14 +399,16 @@ async function processCreateOptions(options: any): Promise<void> {
       },
       initial: options.domain,
       skip(): boolean {
-        return !(this as any).state.answers.privateWebsite && !(this as any).state.answers.customPublicDomain;
+        return (
+          !(this as any).state.answers.privateWebsite &&
+          !(this as any).state.answers.customPublicDomain
+        );
       },
     },
     {
       type: "confirm",
       name: "cognitoFederationEnabled",
-      message:
-        "Do you want to enable Federated (SSO) login with Cognito?",
+      message: "Do you want to enable Federated (SSO) login with Cognito?",
       initial: options.cognitoFederationEnabled || false,
     },
     {
@@ -351,14 +443,17 @@ async function processCreateOptions(options: any): Promise<void> {
       message:
         "Provide a URL to a SAML metadata document. This document is issued by your SAML provider.",
       validate(v: string) {
-        return ((this as any).skipped || StringUtils.isUrl(v)) ?
-          true : 'That does not look like a valid URL'
+        return (this as any).skipped || StringUtils.isUrl(v)
+          ? true
+          : "That does not look like a valid URL";
       },
       skip(): boolean {
-        if (!(this as any).state.answers.cognitoFederationEnabled){
+        if (!(this as any).state.answers.cognitoFederationEnabled) {
           return true;
         }
-        return !(this as any).state.answers.cognitoCustomProviderType.includes("SAML");
+        return !(this as any).state.answers.cognitoCustomProviderType.includes(
+          "SAML"
+        );
       },
       initial: options.cognitoCustomProviderSAMLMetadata || "",
     },
@@ -369,17 +464,22 @@ async function processCreateOptions(options: any): Promise<void> {
         "Enter the client ID provided by OpenID Connect identity provider.",
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
         // Regular expression to match HH:MM format
         const regex = /^[a-zA-Z0-9-_]{1,255}$/;
-        return regex.test(v) || 'Must only contain Alpha Numeric characters, "-" or "_" and be a maximum of 255 in length.';
+        return (
+          regex.test(v) ||
+          'Must only contain Alpha Numeric characters, "-" or "_" and be a maximum of 255 in length.'
+        );
       },
       skip(): boolean {
-        if (!(this as any).state.answers.cognitoFederationEnabled){
+        if (!(this as any).state.answers.cognitoFederationEnabled) {
           return true;
         }
-        return !(this as any).state.answers.cognitoCustomProviderType.includes("OIDC");
+        return !(this as any).state.answers.cognitoCustomProviderType.includes(
+          "OIDC"
+        );
       },
       initial: options.cognitoCustomProviderOIDCClient || "",
     },
@@ -395,27 +495,31 @@ async function processCreateOptions(options: any): Promise<void> {
       message:
         "Enter the secret manager ARN containing the OIDC client secret to use (see docs for info)",
       skip(): boolean {
-        if (!(this as any).state.answers.cognitoFederationEnabled){
+        if (!(this as any).state.answers.cognitoFederationEnabled) {
           return true;
         }
-        return !(this as any).state.answers.cognitoCustomProviderType.includes("OIDC");
+        return !(this as any).state.answers.cognitoCustomProviderType.includes(
+          "OIDC"
+        );
       },
       initial: options.cognitoCustomProviderOIDCSecret || "",
     },
     {
       type: "input",
       name: "cognitoCustomProviderOIDCIssuerURL",
-      message:
-        "Enter the issuer URL you received from the OIDC provider.",
+      message: "Enter the issuer URL you received from the OIDC provider.",
       validate(v: string) {
-        return ((this as any).skipped || StringUtils.isUrl(v)) ?
-          true : 'That does not look like a valid URL'
+        return (this as any).skipped || StringUtils.isUrl(v)
+          ? true
+          : "That does not look like a valid URL";
       },
       skip(): boolean {
-        if (!(this as any).state.answers.cognitoFederationEnabled){
+        if (!(this as any).state.answers.cognitoFederationEnabled) {
           return true;
         }
-        return !(this as any).state.answers.cognitoCustomProviderType.includes("OIDC");
+        return !(this as any).state.answers.cognitoCustomProviderType.includes(
+          "OIDC"
+        );
       },
       initial: options.cognitoCustomProviderOIDCIssuerURL || "",
     },
@@ -432,7 +536,8 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "confirm",
       name: "cfGeoRestrictEnable",
-      message: "Do want to restrict access to the website (CF Distribution) to only a country or countries?",
+      message:
+        "Do want to restrict access to the website (CF Distribution) to only a country or countries?",
       initial: options.cfGeoRestrictEnable || false,
       skip(): boolean {
         return (this as any).state.answers.privateWebsite;
@@ -451,7 +556,10 @@ async function processCreateOptions(options: any): Promise<void> {
       },
       skip(): boolean {
         (this as any).state._choices = (this as any).state.choices;
-        return (!(this as any).state.answers.cfGeoRestrictEnable || (this as any).state.answers.privateWebsite);
+        return (
+          !(this as any).state.answers.cfGeoRestrictEnable ||
+          (this as any).state.answers.privateWebsite
+        );
       },
       initial: options.cfGeoRestrictList || [],
     },
@@ -521,7 +629,7 @@ async function processCreateOptions(options: any): Promise<void> {
         const valid = secretManagerArnRegExp.test(v);
         return v.length === 0 || valid
           ? true
-          : "If you are supplying a HF API key it needs to be a reference to a secrets manager secret ARN"
+          : "If you are supplying a HF API key it needs to be a reference to a secrets manager secret ARN";
       },
       initial: options.huggingfaceApiSecretArn || "",
       skip(): boolean {
@@ -531,9 +639,14 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "confirm",
       name: "enableSagemakerModelsSchedule",
-      message: "Do you want to enable a start/stop schedule for sagemaker models?",
+      message:
+        "Do you want to enable a start/stop schedule for sagemaker models?",
       initial(): boolean {
-        return (options.enableSagemakerModelsSchedule && (this as any).state.answers.enableSagemakerModels) || false;
+        return (
+          (options.enableSagemakerModelsSchedule &&
+            (this as any).state.answers.enableSagemakerModels) ||
+          false
+        );
       },
       skip(): boolean {
         return !(this as any).state.answers.enableSagemakerModels;
@@ -573,23 +686,23 @@ async function processCreateOptions(options: any): Promise<void> {
       type: "input",
       name: "sagemakerCronStartSchedule",
       hint: "This cron format is using AWS eventbridge cron syntax see docs for more information",
-      message: "Start schedule for Sagmaker models expressed in UTC AWS cron format",
+      message:
+        "Start schedule for Sagmaker models expressed in UTC AWS cron format",
       skip(): boolean {
         return !(this as any).state.answers.enableCronFormat.includes("cron");
       },
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
         try {
-          AWSCronValidator.validate(v)
-          return true
-        }
-        catch (error) {
-          if (error instanceof Error){
-            return error.message
+          AWSCronValidator.validate(v);
+          return true;
+        } catch (error) {
+          if (error instanceof Error) {
+            return error.message;
           }
-          return false
+          return false;
         }
       },
       initial: options.cronSagemakerModelsScheduleStart,
@@ -604,17 +717,16 @@ async function processCreateOptions(options: any): Promise<void> {
       },
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
         try {
-          AWSCronValidator.validate(v)
-          return true
-        }
-        catch (error) {
-          if (error instanceof Error){
-            return error.message
+          AWSCronValidator.validate(v);
+          return true;
+        } catch (error) {
+          if (error instanceof Error) {
+            return error.message;
           }
-          return false
+          return false;
         }
       },
       initial: options.cronSagemakerModelsScheduleStop,
@@ -640,7 +752,7 @@ async function processCreateOptions(options: any): Promise<void> {
       },
       skip(): boolean {
         (this as any).state._choices = (this as any).state.choices;
-        if (!(this as any).state.answers.enableSagemakerModelsSchedule){
+        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
         return !(this as any).state.answers.enableCronFormat.includes("simple");
@@ -650,17 +762,18 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "input",
       name: "scheduleStartTime",
-      message: "What time of day do you wish to run the start schedule? enter in HH:MM format",
+      message:
+        "What time of day do you wish to run the start schedule? enter in HH:MM format",
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
         // Regular expression to match HH:MM format
         const regex = /^([0-1]?[0-9]|2[0-3]):([0-5]?[0-9])$/;
-        return regex.test(v) || 'Time must be in HH:MM format!';
+        return regex.test(v) || "Time must be in HH:MM format!";
       },
       skip(): boolean {
-        if (!(this as any).state.answers.enableSagemakerModelsSchedule){
+        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
         return !(this as any).state.answers.enableCronFormat.includes("simple");
@@ -670,17 +783,18 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "input",
       name: "scheduleStopTime",
-      message: "What time of day do you wish to run the stop schedule? enter in HH:MM format",
+      message:
+        "What time of day do you wish to run the stop schedule? enter in HH:MM format",
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
         // Regular expression to match HH:MM format
         const regex = /^([0-1]?[0-9]|2[0-3]):([0-5]?[0-9])$/;
-        return regex.test(v) || 'Time must be in HH:MM format!';
+        return regex.test(v) || "Time must be in HH:MM format!";
       },
       skip(): boolean {
-        if (!(this as any).state.answers.enableSagemakerModelsSchedule){
+        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
         return !(this as any).state.answers.enableCronFormat.includes("simple");
@@ -690,7 +804,8 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "confirm",
       name: "enableScheduleEndDate",
-      message: "Would you like to set an end data for the start schedule? (after this date the models would no longer start)",
+      message:
+        "Would you like to set an end data for the start schedule? (after this date the models would no longer start)",
       initial: options.enableScheduleEndDate || false,
       skip(): boolean {
         return !(this as any).state.answers.enableSagemakerModelsSchedule;
@@ -703,9 +818,12 @@ async function processCreateOptions(options: any): Promise<void> {
       hint: "YYYY-MM-DD",
       validate(v: string) {
         if ((this as any).skipped) {
-          return true
+          return true;
         }
-        return isValidDate(v) || 'The date must be in format YYYY/MM/DD and be in the future';
+        return (
+          isValidDate(v) ||
+          "The date must be in format YYYY/MM/DD and be in the future"
+        );
       },
       skip(): boolean {
         return !(this as any).state.answers.enableScheduleEndDate;
@@ -758,7 +876,7 @@ async function processCreateOptions(options: any): Promise<void> {
           options.kendraExternal.length > 0) ||
         false,
       skip(): boolean {
-        if (!(this as any).state.answers.enableRag){
+        if (!(this as any).state.answers.enableRag) {
           return true;
         }
         return !(this as any).state.answers.ragsToEnable.includes("kendra");
@@ -840,51 +958,59 @@ async function processCreateOptions(options: any): Promise<void> {
   }
   const modelsPrompts = [
     {
-      type: "select", 
+      type: "select",
       name: "defaultEmbedding",
       message: "Select a default embedding model",
-      choices: embeddingModels.map(m => ({name: m.name, value: m})),
+      choices: embeddingModels.map((m) => ({ name: m.name, value: m })),
       initial: options.defaultEmbedding,
       validate(value: string) {
         if ((this as any).state.answers.enableRag) {
-          return value ? true : 'Select a default embedding model'; 
+          return value ? true : "Select a default embedding model";
         }
-      
+
         return true;
       },
       skip() {
-        return !answers.enableRag || !(answers.ragsToEnable.includes("aurora") || answers.ragsToEnable.includes("opensearch"));
-      }
-    }
+        return (
+          !answers.enableRag ||
+          !(
+            answers.ragsToEnable.includes("aurora") ||
+            answers.ragsToEnable.includes("opensearch")
+          )
+        );
+      },
+    },
   ];
   const models: any = await enquirer.prompt(modelsPrompts);
 
   // Convert simple time into cron format for schedule
-  if (answers.enableSagemakerModelsSchedule && answers.enableCronFormat == "simple")
-  {
+  if (
+    answers.enableSagemakerModelsSchedule &&
+    answers.enableCronFormat == "simple"
+  ) {
     const daysToRunSchedule = answers.daysForSchedule.join(",");
     const startMinutes = answers.scheduleStartTime.split(":")[1];
     const startHour = answers.scheduleStartTime.split(":")[0];
     answers.sagemakerCronStartSchedule = `${startMinutes} ${startHour} ? * ${daysToRunSchedule} *`;
-    AWSCronValidator.validate(answers.sagemakerCronStartSchedule)
+    AWSCronValidator.validate(answers.sagemakerCronStartSchedule);
 
-    
     const stopMinutes = answers.scheduleStopTime.split(":")[1];
     const stopHour = answers.scheduleStopTime.split(":")[0];
     answers.sagemakerCronStopSchedule = `${stopMinutes} ${stopHour} ? * ${daysToRunSchedule} *`;
-    AWSCronValidator.validate(answers.sagemakerCronStopSchedule)
+    AWSCronValidator.validate(answers.sagemakerCronStopSchedule);
   }
-  
-  const randomSuffix = randomBytes(8).toString('hex');
-  
+
+  const randomSuffix = randomBytes(8).toString("hex");
+
   // Create the config object
+
   const config = {
     prefix: answers.prefix,
     vpc: answers.existingVpc
       ? {
           vpcId: answers.vpcId.toLowerCase(),
           createVpcEndpoints: answers.createVpcEndpoints,
-      }
+        }
       : undefined,
     privateWebsite: answers.privateWebsite,
     certificate: answers.certificate,
@@ -895,19 +1021,24 @@ async function processCreateOptions(options: any): Promise<void> {
           autoRedirect: answers.cognitoAutoRedirect,
           customProviderName: answers.cognitoCustomProviderName,
           customProviderType: answers.cognitoCustomProviderType,
-          customSAML: answers.cognitoCustomProviderType == "SAML"
-            ? {
-                metadataDocumentUrl: answers.cognitoCustomProviderSAMLMetadata
-            }
-            : undefined,
-          customOIDC: answers.cognitoCustomProviderType == "OIDC"
-            ? {
-                OIDCClient: answers.cognitoCustomProviderOIDCClient,
-                OIDCSecret: answers.cognitoCustomProviderOIDCSecret,
-                OIDCIssuerURL: answers.cognitoCustomProviderOIDCIssuerURL,
-            }
-            : undefined,
-          cognitoDomain: options.cognitoDomain ? options.cognitoDomain : `llm-cb-${randomSuffix}`,
+          customSAML:
+            answers.cognitoCustomProviderType == "SAML"
+              ? {
+                  metadataDocumentUrl:
+                    answers.cognitoCustomProviderSAMLMetadata,
+                }
+              : undefined,
+          customOIDC:
+            answers.cognitoCustomProviderType == "OIDC"
+              ? {
+                  OIDCClient: answers.cognitoCustomProviderOIDCClient,
+                  OIDCSecret: answers.cognitoCustomProviderOIDCSecret,
+                  OIDCIssuerURL: answers.cognitoCustomProviderOIDCIssuerURL,
+                }
+              : undefined,
+          cognitoDomain: options.cognitoDomain
+            ? options.cognitoDomain
+            : `llm-cb-${randomSuffix}`,
         }
       : undefined,
     cfGeoRestrictEnable: answers.cfGeoRestrictEnable,
@@ -990,11 +1121,22 @@ async function processCreateOptions(options: any): Promise<void> {
       {
         type: "confirm",
         name: "create",
-        message: "Do you want to create/update the configuration based on the above settings",
+        message:
+          "Do you want to create/update the configuration based on the above settings",
         initial: true,
       },
     ])) as any
   ).create
     ? createConfig(config)
     : console.log("Skipping");
+  return (
+    (await enquirer.prompt([
+      {
+        type: "confirm",
+        name: "deploy",
+        message: "Do you want to deploy this project via a cloud build",
+        initial: false,
+      },
+    ])) as any
+  ).deploy;
 }

@@ -5,6 +5,7 @@ import { AwsGenAILLMChatbotStack } from "../lib/aws-genai-llm-chatbot-stack";
 import { AwsSolutionsChecks } from "cdk-nag";
 import { getConfig } from "./config";
 import { Aspects } from "aws-cdk-lib";
+import { AwsGenAIChatBuildStack } from "../lib/aws-genai-llm-build-stack";
 
 const app = new cdk.App();
 
@@ -12,6 +13,13 @@ const config = getConfig();
 
 new AwsGenAILLMChatbotStack(app, `${config.prefix}GenAIChatBotStack`, {
   config,
+  env: {
+    region: process.env.CDK_DEFAULT_REGION,
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+  },
+});
+
+new AwsGenAIChatBuildStack(app, `AWSGenAIChatBuildStack`, {
   env: {
     region: process.env.CDK_DEFAULT_REGION,
     account: process.env.CDK_DEFAULT_ACCOUNT,
