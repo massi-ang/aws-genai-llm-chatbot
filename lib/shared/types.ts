@@ -108,9 +108,7 @@ export interface SystemConfig {
       identifier: string;
       version: string;
     };
-    bedrockAgentAliasId?: string;
-    bedrockAgentId?: string;
-    agents?: boolean;
+    agents: { bedrockAgentAliasId?: string; bedrockAgentId?: string }[];
   };
 
   llms: {
