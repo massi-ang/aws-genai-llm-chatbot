@@ -33,10 +33,9 @@ export interface AgentTrace {
 export default function Chat(props: { sessionId?: string }) {
   const appContext = useContext(AppContext);
   const [running, setRunning] = useState<boolean>(false);
-  const [session, setSession] = useState<{ id: string; loading: boolean }>({
-    id: props.sessionId ?? uuidv4(),
-    loading: typeof props.sessionId !== "undefined",
-  });
+  const [session, setSession] = useState<
+    { id: string; loading: boolean } | undefined
+  >();
   const [initError, setInitError] = useState<string | undefined>(undefined);
   const [configuration, setConfiguration] = useState<ChatBotConfiguration>(
     () => ({
@@ -169,17 +168,19 @@ export default function Chat(props: { sessionId?: string }) {
         )}
       </div>
       <div className={styles.input_container}>
-        <ChatInputPanel
-          session={session}
-          running={running}
-          setRunning={setRunning}
-          messageHistory={messageHistory}
-          setMessageHistory={(history) => setMessageHistory(history)}
-          setInitErrorMessage={(error) => setInitError(error)}
-          configuration={configuration}
-          setConfiguration={setConfiguration}
-          setAgentTrace={setAgentTrace}
-        />
+        {session && (
+          <ChatInputPanel
+            session={session}
+            running={running}
+            setRunning={setRunning}
+            messageHistory={messageHistory}
+            setMessageHistory={(history) => setMessageHistory(history)}
+            setInitErrorMessage={(error) => setInitError(error)}
+            configuration={configuration}
+            setConfiguration={setConfiguration}
+            setAgentTrace={setAgentTrace}
+          />
+        )}
       </div>
     </div>
   );
