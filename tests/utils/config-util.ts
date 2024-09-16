@@ -15,6 +15,7 @@ export function getTestConfig(): SystemConfig {
     bedrock: {
       enabled: true,
       region: SupportedRegion.US_EAST_1,
+      agents: [],
     },
     llms: {
       sagemaker: [

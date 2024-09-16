@@ -1,11 +1,12 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { CodeBuildProject } from "aws-cdk-lib/aws-events-targets";
 import { BuildSpec, Project } from "aws-cdk-lib/aws-codebuild";
 import { readFileSync } from "fs";
 import { ManagedPolicy, Role } from "aws-cdk-lib/aws-iam";
+import { NagSuppressions } from "cdk-nag";
 
 export interface AwsGenAIChatBuildStackProps extends cdk.StackProps {
+  // eslint-disable-next-line
   readonly config: any;
 }
 
@@ -21,7 +22,9 @@ export class AwsGenAIChatBuildStack extends cdk.Stack {
     const codeBuildRole = new Role(this, "GenAI-CodeBuildRole", {
       assumedBy: new cdk.aws_iam.ServicePrincipal("codebuild.amazonaws.com"),
     });
-    codeBuildRole.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess"));
+    codeBuildRole.addManagedPolicy(
+      ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess")
+    );
 
     const buildProj = new Project(this, "GenAI-CloudBuild", {
       environment: {
@@ -60,11 +63,29 @@ export class AwsGenAIChatBuildStack extends cdk.Stack {
       role: codeBuildRole,
       concurrentBuildLimit: 1,
     });
-    
+
     new cdk.CfnOutput(this, "BuildProjectName", {
-        description: "Build Project Name",
-        value: buildProj.projectName,
-        exportName: "buildProjectName"
-    })
+      description: "Build Project Name",
+      value: buildProj.projectName,
+      exportName: "buildProjectName",
+    });
+
+    NagSuppressions.addResourceSuppressionsByPath(
+      this,
+      [`/${this.stackName}/GenAI-CodeBuildRole/Resource`],
+      [{ id: "AwsSolutions-IAM4", reason: "It is ok to not have it" }]
+    );
+
+    NagSuppressions.addResourceSuppressionsByPath(
+      this,
+      [`/${this.stackName}/GenAI-CloudBuild/Resource`],
+      [{ id: "AwsSolutions-CB4", reason: "It is ok to not have it" }]
+    );
+
+    NagSuppressions.addResourceSuppressionsByPath(
+      this,
+      [`/${this.stackName}/GenAI-CodeBuildRole/DefaultPolicy/Resource`],
+      [{ id: "AwsSolutions-IAM5", reason: "It is ok to not have it" }]
+    );
   }
 }

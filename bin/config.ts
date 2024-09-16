@@ -20,6 +20,7 @@ export function getConfig(): SystemConfig {
     bedrock: {
       enabled: true,
       region: SupportedRegion.US_EAST_1,
+      agents: [],
     },
     llms: {
       // sagemaker: [SupportedSageMakerModels.FalconLite]

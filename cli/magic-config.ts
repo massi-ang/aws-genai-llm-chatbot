@@ -16,11 +16,11 @@ import * as fs from "fs";
 import { exec } from "child_process";
 import { CodeBuild } from "@aws-sdk/client-codebuild";
 import { CloudWatchLogs } from "@aws-sdk/client-cloudwatch-logs";
-import { AWSCronValidator } from "./aws-cron-validator"
-import { tz } from 'moment-timezone';
-import { getData } from 'country-list';
-import { randomBytes } from 'crypto';
-import { StringUtils } from 'turbocommons-ts';
+import { AWSCronValidator } from "./aws-cron-validator";
+import { tz } from "moment-timezone";
+import { getData } from "country-list";
+import { randomBytes } from "crypto";
+import { StringUtils } from "turbocommons-ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -35,14 +35,14 @@ function getTimeZonesWithCurrentTime(): { message: string; name: string }[] {
 }
 
 function getCountryCodesAndNames(): { message: string; name: string }[] {
-    // Use country-list to get an array of countries with their codes and names
-    const countries = getData();
+  // Use country-list to get an array of countries with their codes and names
+  const countries = getData();
 
-    // Map the country data to match the desired output structure
-    const countryInfo = countries.map(({ code, name }) => {
-        return { message: `${name} (${code})`, name: code };
-    });
-    return countryInfo;
+  // Map the country data to match the desired output structure
+  const countryInfo = countries.map(({ code, name }) => {
+    return { message: `${name} (${code})`, name: code };
+  });
+  return countryInfo;
 }
 
 function isValidDate(dateString: string): boolean {
@@ -60,7 +60,11 @@ function isValidDate(dateString: string): boolean {
 
   // Check the date validity
   const date = new Date(year, month, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) {
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
     return false;
   }
 
@@ -79,9 +83,13 @@ const cfCountries = getCountryCodesAndNames();
 
 const iamRoleRegExp = RegExp(/arn:aws:iam::\d+:role\/[\w-_]+/);
 const acmCertRegExp = RegExp(/arn:aws:acm:[\w-_]+:\d+:certificate\/[\w-_]+/);
-const cfAcmCertRegExp = RegExp(/arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/);
+const cfAcmCertRegExp = RegExp(
+  /arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/
+);
 const kendraIdRegExp = RegExp(/^\w{8}-\w{4}-\w{4}-\w{4}-\w{12}$/);
-const secretManagerArnRegExp = RegExp(/arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/);
+const secretManagerArnRegExp = RegExp(
+  /arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/
+);
 
 const embeddingModels = [
   {
@@ -333,8 +341,10 @@ async function processCreateOptions(options: any): Promise<boolean> {
       message: "Specify existing VpcId (vpc-xxxxxxxxxxxxxxxxx)",
       initial: options.vpcId,
       validate(vpcId: string) {
-        return ((this as any).skipped || RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)) ?
-          true : 'Enter a valid VpcId in vpc-xxxxxxxxxxx format'
+        return (this as any).skipped ||
+          RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)
+          ? true
+          : "Enter a valid VpcId in vpc-xxxxxxxxxxx format";
       },
       skip(): boolean {
         return !(this as any).state.answers.existingVpc;
@@ -457,14 +467,7 @@ async function processCreateOptions(options: any): Promise<boolean> {
       name: "enableSagemakerModelsSchedule",
       message:
         "Do you want to enable a start/stop schedule for sagemaker models?",
-      message:
-        "Do you want to enable a start/stop schedule for sagemaker models?",
       initial(): boolean {
-        return (
-          (options.enableSagemakerModelsSchedule &&
-            (this as any).state.answers.enableSagemakerModels) ||
-          false
-        );
         return (
           (options.enableSagemakerModelsSchedule &&
             (this as any).state.answers.enableSagemakerModels) ||
@@ -511,8 +514,6 @@ async function processCreateOptions(options: any): Promise<boolean> {
       hint: "This cron format is using AWS eventbridge cron syntax see docs for more information",
       message:
         "Start schedule for Sagmaker models expressed in UTC AWS cron format",
-      message:
-        "Start schedule for Sagmaker models expressed in UTC AWS cron format",
       skip(): boolean {
         return !(this as any).state.answers.enableCronFormat.includes("cron");
       },
@@ -526,13 +527,7 @@ async function processCreateOptions(options: any): Promise<boolean> {
         } catch (error) {
           if (error instanceof Error) {
             return error.message;
-          AWSCronValidator.validate(v);
-          return true;
-        } catch (error) {
-          if (error instanceof Error) {
-            return error.message;
           }
-          return false;
           return false;
         }
       },
@@ -550,7 +545,6 @@ async function processCreateOptions(options: any): Promise<boolean> {
       validate(v: string) {
         if ((this as any).skipped) {
           return true;
-          return true;
         }
         try {
           AWSCronValidator.validate(v);
@@ -558,13 +552,7 @@ async function processCreateOptions(options: any): Promise<boolean> {
         } catch (error) {
           if (error instanceof Error) {
             return error.message;
-          AWSCronValidator.validate(v);
-          return true;
-        } catch (error) {
-          if (error instanceof Error) {
-            return error.message;
           }
-          return false;
           return false;
         }
       },
@@ -592,7 +580,6 @@ async function processCreateOptions(options: any): Promise<boolean> {
       skip(): boolean {
         (this as any).state._choices = (this as any).state.choices;
         if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
-        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
         return !(this as any).state.answers.enableCronFormat.includes("simple");
@@ -604,20 +591,15 @@ async function processCreateOptions(options: any): Promise<boolean> {
       name: "scheduleStartTime",
       message:
         "What time of day do you wish to run the start schedule? enter in HH:MM format",
-      message:
-        "What time of day do you wish to run the start schedule? enter in HH:MM format",
       validate(v: string) {
         if ((this as any).skipped) {
-          return true;
           return true;
         }
         // Regular expression to match HH:MM format
         const regex = /^([0-1]?[0-9]|2[0-3]):([0-5]?[0-9])$/;
         return regex.test(v) || "Time must be in HH:MM format!";
-        return regex.test(v) || "Time must be in HH:MM format!";
       },
       skip(): boolean {
-        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
         if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
@@ -628,8 +610,6 @@ async function processCreateOptions(options: any): Promise<boolean> {
     {
       type: "input",
       name: "scheduleStopTime",
-      message:
-        "What time of day do you wish to run the stop schedule? enter in HH:MM format",
       message:
         "What time of day do you wish to run the stop schedule? enter in HH:MM format",
       validate(v: string) {
