@@ -13,11 +13,14 @@ import {
 } from "../lib/shared/types";
 import { LIB_VERSION } from "./version.js";
 import * as fs from "fs";
-import { AWSCronValidator } from "./aws-cron-validator";
-import { tz } from "moment-timezone";
-import { getData } from "country-list";
-import { randomBytes } from "crypto";
-import { StringUtils } from "turbocommons-ts";
+import { exec } from "child_process";
+import { CodeBuild } from "@aws-sdk/client-codebuild";
+import { CloudWatchLogs } from "@aws-sdk/client-cloudwatch-logs";
+import { AWSCronValidator } from "./aws-cron-validator"
+import { tz } from 'moment-timezone';
+import { getData } from 'country-list';
+import { randomBytes } from 'crypto';
+import { StringUtils } from 'turbocommons-ts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -32,14 +35,14 @@ function getTimeZonesWithCurrentTime(): { message: string; name: string }[] {
 }
 
 function getCountryCodesAndNames(): { message: string; name: string }[] {
-  // Use country-list to get an array of countries with their codes and names
-  const countries = getData();
+    // Use country-list to get an array of countries with their codes and names
+    const countries = getData();
 
-  // Map the country data to match the desired output structure
-  const countryInfo = countries.map(({ code, name }) => {
-    return { message: `${name} (${code})`, name: code };
-  });
-  return countryInfo;
+    // Map the country data to match the desired output structure
+    const countryInfo = countries.map(({ code, name }) => {
+        return { message: `${name} (${code})`, name: code };
+    });
+    return countryInfo;
 }
 
 function isValidDate(dateString: string): boolean {
@@ -57,11 +60,7 @@ function isValidDate(dateString: string): boolean {
 
   // Check the date validity
   const date = new Date(year, month, day);
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month ||
-    date.getDate() !== day
-  ) {
+  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) {
     return false;
   }
 
@@ -80,13 +79,9 @@ const cfCountries = getCountryCodesAndNames();
 
 const iamRoleRegExp = RegExp(/arn:aws:iam::\d+:role\/[\w-_]+/);
 const acmCertRegExp = RegExp(/arn:aws:acm:[\w-_]+:\d+:certificate\/[\w-_]+/);
-const cfAcmCertRegExp = RegExp(
-  /arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/
-);
+const cfAcmCertRegExp = RegExp(/arn:aws:acm:us-east-1:\d+:certificate\/[\w-_]+/);
 const kendraIdRegExp = RegExp(/^\w{8}-\w{4}-\w{4}-\w{4}-\w{12}$/);
-const secretManagerArnRegExp = RegExp(
-  /arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/
-);
+const secretManagerArnRegExp = RegExp(/arn:aws:secretsmanager:[\w-_]+:\d+:secret:[\w-_]+/);
 
 const embeddingModels = [
   {
@@ -148,6 +143,7 @@ const embeddingModels = [
       options.vpcId = config.vpc?.vpcId;
       options.bedrockEnable = config.bedrock?.enabled;
       options.bedrockRegion = config.bedrock?.region;
+      options.bedrockEndpoint = config.bedrock?.endpointUrl;
       options.bedrockRoleArn = config.bedrock?.roleArn;
       options.guardrailsEnable = config.bedrock?.guardrails?.enabled;
       options.guardrails = config.bedrock?.guardrails;
@@ -157,8 +153,6 @@ const embeddingModels = [
         ? config.llms?.sagemaker.length > 0
         : false;
       options.huggingfaceApiSecretArn = config.llms?.huggingfaceApiSecretArn;
-      options.enableSagemakerModelsSchedule =
-        config.llms?.sagemakerSchedule?.enabled;
       options.enableSagemakerModelsSchedule =
         config.llms?.sagemakerSchedule?.enabled;
       options.timezonePicker = config.llms?.sagemakerSchedule?.timezonePicker;
@@ -226,8 +220,12 @@ const embeddingModels = [
       options.cfGeoRestrictList = config.cfGeoRestrictList;
     }
     try {
-      await processCreateOptions(options);
-    } catch (err) {
+      if (await processCreateOptions(options)) {
+        performCloudBuild();
+      } else {
+        console.log("\nRun\n\nnpx cdk deploy\n");
+      }
+    } catch (err: any) {
       console.error("Could not complete the operation.");
       if (err instanceof Error) {
         console.error(err.message);
@@ -238,6 +236,63 @@ const embeddingModels = [
 
   program.parse(process.argv);
 })();
+
+function performCloudBuild() {
+  let buildProjectName: string;
+  console.log("Deploying build stack...");
+  const cp = exec(
+    "npx cdk deploy AWSGenAIChatBuildStack --require-approval never --ci --no-color",
+    (err, stdout) => {
+      (async () => {
+        if (err) {
+          console.log(stdout);
+          console.log(err);
+          return;
+        }
+        console.log("\nBuilding ", buildProjectName);
+        const cbClient = new CodeBuild();
+        try {
+          const build = await cbClient.startBuild({
+            projectName: buildProjectName,
+          });
+          function checkBuild() {
+            (async () => {
+              if (
+                (
+                  await cbClient.batchGetBuilds({
+                    ids: [build.build?.id ?? ""],
+                  })
+                ).builds?.at(0)?.buildStatus == "IN_PROGRESS"
+              ) {
+                process.stdout.write(".");
+                setTimeout(checkBuild, 1000);
+              } else {
+                console.log("\n");
+                const cwLogs = new CloudWatchLogs();
+                const logs = await cwLogs.filterLogEvents({
+                  logGroupName: `/aws/codebuild/${buildProjectName}`,
+                  startTime: Date.now() - 10 * 60 * 1000,
+                });
+                logs.events?.forEach((e: any) =>
+                  process.stdout.write(e.message ?? "")
+                );
+              }
+            })();
+          }
+          setTimeout(checkBuild, 1000);
+        } catch (err) {
+          console.error(err);
+        }
+      })();
+    }
+  );
+  cp.stdout?.on("data", (data: string) => {
+    process.stdout.write(".");
+    if (data.includes("GenAIChatBuildStack.BuildProjectName")) {
+      buildProjectName = data.split(" = ")[1].split("\n")[0];
+    }
+  });
+}
 
 function createConfig(config: any): void {
   fs.writeFileSync("./bin/config.json", JSON.stringify(config, undefined, 2));
@@ -250,7 +305,7 @@ function createConfig(config: any): void {
  * @param options Options provided via the CLI
  * @returns The complete options
  */
-async function processCreateOptions(options: any): Promise<void> {
+async function processCreateOptions(options: any): Promise<boolean> {
   const questions = [
     {
       type: "input",
@@ -278,10 +333,8 @@ async function processCreateOptions(options: any): Promise<void> {
       message: "Specify existing VpcId (vpc-xxxxxxxxxxxxxxxxx)",
       initial: options.vpcId,
       validate(vpcId: string) {
-        return (this as any).skipped ||
-          RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)
-          ? true
-          : "Enter a valid VpcId in vpc-xxxxxxxxxxx format";
+        return ((this as any).skipped || RegExp(/^vpc-[0-9a-f]{8,17}$/i).test(vpcId)) ?
+          true : 'Enter a valid VpcId in vpc-xxxxxxxxxxx format'
       },
       skip(): boolean {
         return !(this as any).state.answers.existingVpc;
@@ -404,7 +457,14 @@ async function processCreateOptions(options: any): Promise<void> {
       name: "enableSagemakerModelsSchedule",
       message:
         "Do you want to enable a start/stop schedule for sagemaker models?",
+      message:
+        "Do you want to enable a start/stop schedule for sagemaker models?",
       initial(): boolean {
+        return (
+          (options.enableSagemakerModelsSchedule &&
+            (this as any).state.answers.enableSagemakerModels) ||
+          false
+        );
         return (
           (options.enableSagemakerModelsSchedule &&
             (this as any).state.answers.enableSagemakerModels) ||
@@ -451,6 +511,8 @@ async function processCreateOptions(options: any): Promise<void> {
       hint: "This cron format is using AWS eventbridge cron syntax see docs for more information",
       message:
         "Start schedule for Sagmaker models expressed in UTC AWS cron format",
+      message:
+        "Start schedule for Sagmaker models expressed in UTC AWS cron format",
       skip(): boolean {
         return !(this as any).state.answers.enableCronFormat.includes("cron");
       },
@@ -464,7 +526,13 @@ async function processCreateOptions(options: any): Promise<void> {
         } catch (error) {
           if (error instanceof Error) {
             return error.message;
+          AWSCronValidator.validate(v);
+          return true;
+        } catch (error) {
+          if (error instanceof Error) {
+            return error.message;
           }
+          return false;
           return false;
         }
       },
@@ -482,6 +550,7 @@ async function processCreateOptions(options: any): Promise<void> {
       validate(v: string) {
         if ((this as any).skipped) {
           return true;
+          return true;
         }
         try {
           AWSCronValidator.validate(v);
@@ -489,7 +558,13 @@ async function processCreateOptions(options: any): Promise<void> {
         } catch (error) {
           if (error instanceof Error) {
             return error.message;
+          AWSCronValidator.validate(v);
+          return true;
+        } catch (error) {
+          if (error instanceof Error) {
+            return error.message;
           }
+          return false;
           return false;
         }
       },
@@ -517,6 +592,7 @@ async function processCreateOptions(options: any): Promise<void> {
       skip(): boolean {
         (this as any).state._choices = (this as any).state.choices;
         if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
+        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
         return !(this as any).state.answers.enableCronFormat.includes("simple");
@@ -528,15 +604,20 @@ async function processCreateOptions(options: any): Promise<void> {
       name: "scheduleStartTime",
       message:
         "What time of day do you wish to run the start schedule? enter in HH:MM format",
+      message:
+        "What time of day do you wish to run the start schedule? enter in HH:MM format",
       validate(v: string) {
         if ((this as any).skipped) {
+          return true;
           return true;
         }
         // Regular expression to match HH:MM format
         const regex = /^([0-1]?[0-9]|2[0-3]):([0-5]?[0-9])$/;
         return regex.test(v) || "Time must be in HH:MM format!";
+        return regex.test(v) || "Time must be in HH:MM format!";
       },
       skip(): boolean {
+        if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
         if (!(this as any).state.answers.enableSagemakerModelsSchedule) {
           return true;
         }
@@ -547,6 +628,8 @@ async function processCreateOptions(options: any): Promise<void> {
     {
       type: "input",
       name: "scheduleStopTime",
+      message:
+        "What time of day do you wish to run the stop schedule? enter in HH:MM format",
       message:
         "What time of day do you wish to run the stop schedule? enter in HH:MM format",
       validate(v: string) {
@@ -1110,6 +1193,7 @@ async function processCreateOptions(options: any): Promise<void> {
   const randomSuffix = randomBytes(8).toString("hex");
 
   // Create the config object
+
   const config = {
     prefix: answers.prefix,
     vpc: answers.existingVpc
@@ -1252,4 +1336,14 @@ async function processCreateOptions(options: any): Promise<void> {
   ).create
     ? createConfig(config)
     : console.log("Skipping");
+  return (
+    (await enquirer.prompt([
+      {
+        type: "confirm",
+        name: "deploy",
+        message: "Do you want to deploy this project via a cloud build",
+        initial: false,
+      },
+    ])) as any
+  ).deploy;
 }
