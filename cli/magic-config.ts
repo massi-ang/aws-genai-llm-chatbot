@@ -11,7 +11,6 @@ import {
   SystemConfig,
   SupportedBedrockRegion,
 } from "../lib/shared/types";
-import { LIB_VERSION } from "./version.js";
 import * as fs from "fs";
 import { exec } from "child_process";
 import { CodeBuild } from "@aws-sdk/client-codebuild";
@@ -138,7 +137,7 @@ const embeddingModels = [
   const program = new Command().description(
     "Creates a new chatbot configuration"
   );
-  program.version(LIB_VERSION);
+  program.version("0.0.1");
 
   program.option("-p, --prefix <prefix>", "The prefix for the stack");
 
