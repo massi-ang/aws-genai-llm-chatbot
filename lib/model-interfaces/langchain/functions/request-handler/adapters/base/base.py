@@ -11,11 +11,14 @@ from langchain.chains.conversational_retrieval.prompts import (
     CONDENSE_QUESTION_PROMPT,
 )
 from typing import Dict, List, Any
+from llm_tracing import LangchainInstrumentor
 
 from genai_core.langchain import WorkspaceRetriever, DynamoDBChatMessageHistory
 from genai_core.types import ChatbotMode
 
 logger = Logger()
+
+LangchainInstrumentor.instrument()
 
 
 class Mode(Enum):

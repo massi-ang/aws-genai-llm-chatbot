@@ -30,6 +30,12 @@ export class LangChainInterface extends Construct {
   constructor(scope: Construct, id: string, props: LangChainInterfaceProps) {
     super(scope, id);
 
+    const otelLayer = lambda.LayerVersion.fromLayerVersionArn(
+      this,
+      "otel-layer",
+      `arn:aws:lambda:${cdk.Aws.REGION}:184161586896:layer:opentelemetry-python-0_6_0:1`
+    );
+
     const requestHandler = new lambda.Function(this, "RequestHandler", {
       vpc: props.shared.vpc,
       code: props.shared.sharedCode.bundleWithLambdaAsset(
@@ -42,9 +48,14 @@ export class LangChainInterface extends Construct {
       tracing: lambda.Tracing.ACTIVE,
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
-      logRetention: props.config.logRetention ?? logs.RetentionDays.ONE_WEEK,
+      logRetention: logs.RetentionDays.ONE_WEEK,
       loggingFormat: lambda.LoggingFormat.JSON,
-      layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
+
+      layers: [
+        props.shared.powerToolsLayer,
+        props.shared.commonLayer,
+        otelLayer,
+      ],
       environment: {
         ...props.shared.defaultEnvironmentVariables,
         CONFIG_PARAMETER_NAME: props.shared.configParameter.parameterName,
@@ -73,6 +84,7 @@ export class LangChainInterface extends Construct {
         DEFAULT_KENDRA_S3_DATA_SOURCE_BUCKET_NAME:
           props.ragEngines?.kendraRetrieval?.kendraS3DataSourceBucket
             ?.bucketName ?? "",
+        OPENTELEMETRY_COLLECTOR_CONFIG_FILE: "/var/task/otel-config.yaml",
       },
     });
 
