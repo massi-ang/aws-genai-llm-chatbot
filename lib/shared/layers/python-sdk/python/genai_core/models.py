@@ -43,14 +43,16 @@ def list_bedrock_agents():
         bedrock = genai_core.clients.get_bedrock_client(service_name="bedrock-agent")
         if not bedrock:
             return None
-
+        config = genai_core.parameters.get_config()
+        
+        
         response = bedrock.list_agents()
         agents = [
             bedrock.get_agent(agentId=a["agentId"])["agent"]
             for a in response.get("agentSummaries", [])
             if a.get("agentStatus", "") == genai_core.types.AgentStatus.PREPARED.value
         ]
-
+        
         bedrock_agents = [
             {
                 "provider": Provider.BEDROCK.value,
