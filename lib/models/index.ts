@@ -35,7 +35,7 @@ export class Models extends Construct {
     const models: SageMakerModelEndpoint[] = [];
 
     let hfTokenSecret: secretsmanager.Secret | undefined;
-    if (props.config.llms.huggingfaceApiSecretArn) {
+    if (props.config.llms?.huggingfaceApiSecretArn) {
       hfTokenSecret = secretsmanager.Secret.fromSecretCompleteArn(
         this,
         "HFTokenSecret",

@@ -27,10 +27,11 @@ interface IdeficsInterfaceProps {
   readonly chatbotFilesBucket: s3.Bucket;
   readonly createPrivateGateway: boolean;
 }
+const lambdaDurationInMinutes = 15;
 
 export class IdeficsInterface extends Construct {
-  public readonly ingestionQueue: sqs.Queue;
-  public readonly requestHandler: lambda.Function;
+  public ingestionQueue: sqs.Queue;
+  public requestHandler: lambda.Function;
 
   constructor(
     scope: Construct,
@@ -38,8 +39,6 @@ export class IdeficsInterface extends Construct {
     private props: IdeficsInterfaceProps
   ) {
     super(scope, id);
-
-    const lambdaDurationInMinutes = 15;
 
     let api;
     if (props.createPrivateGateway) {
@@ -293,36 +292,41 @@ export class IdeficsInterface extends Construct {
       this,
       "IdeficsInterfaceRequestHandler",
       {
-        vpc: props.shared.vpc,
-        code: props.shared.sharedCode.bundleWithLambdaAsset(
+        vpc: this.props.shared.vpc,
+        code: this.props.shared.sharedCode.bundleWithLambdaAsset(
           path.join(__dirname, "./functions/request-handler")
         ),
         description: "Idefics request handler",
-        runtime: props.shared.pythonRuntime,
+        runtime: this.props.shared.pythonRuntime,
         handler: "index.handler",
-        layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
-        architecture: props.shared.lambdaArchitecture,
+        layers: [
+          this.props.shared.powerToolsLayer,
+          this.props.shared.commonLayer,
+        ],
+        architecture: this.props.shared.lambdaArchitecture,
         tracing: lambda.Tracing.ACTIVE,
         timeout: cdk.Duration.minutes(lambdaDurationInMinutes),
         memorySize: 1024,
-        logRetention: props.config.logRetention ?? logs.RetentionDays.ONE_WEEK,
+        logRetention:
+          this.props.config.logRetention ?? logs.RetentionDays.ONE_WEEK,
         loggingFormat: lambda.LoggingFormat.JSON,
         environment: {
-          ...props.shared.defaultEnvironmentVariables,
-          CONFIG_PARAMETER_NAME: props.shared.configParameter.parameterName,
-          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
-          SESSIONS_BY_USER_ID_INDEX_NAME: props.byUserIdIndex,
-          MESSAGES_TOPIC_ARN: props.messagesTopic.topicArn,
-          CHATBOT_FILES_BUCKET_NAME: props.chatbotFilesBucket.bucketName,
+          ...this.props.shared.defaultEnvironmentVariables,
+          CONFIG_PARAMETER_NAME:
+            this.props.shared.configParameter.parameterName,
+          SESSIONS_TABLE_NAME: this.props.sessionsTable.tableName,
+          SESSIONS_BY_USER_ID_INDEX_NAME: this.props.byUserIdIndex,
+          MESSAGES_TOPIC_ARN: this.props.messagesTopic.topicArn,
+          CHATBOT_FILES_BUCKET_NAME: this.props.chatbotFilesBucket.bucketName,
           CHATBOT_FILES_PRIVATE_API: api.url,
         },
       }
     );
 
-    props.chatbotFilesBucket.grantRead(requestHandler);
-    props.sessionsTable.grantReadWriteData(requestHandler);
-    props.messagesTopic.grantPublish(requestHandler);
-    props.shared.configParameter.grantRead(requestHandler);
+    this.props.chatbotFilesBucket.grantRead(requestHandler);
+    this.props.sessionsTable.grantReadWriteData(requestHandler);
+    this.props.messagesTopic.grantPublish(requestHandler);
+    this.props.shared.configParameter.grantRead(requestHandler);
     requestHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel"],
@@ -356,7 +360,7 @@ export class IdeficsInterface extends Construct {
       })
     );
 
-    props.messagesTopic.addSubscription(
+    this.props.messagesTopic.addSubscription(
       new SqsSubscription(queue, {
         filterPolicyWithMessageBody: {
           direction: sns.FilterOrPolicy.filter(
