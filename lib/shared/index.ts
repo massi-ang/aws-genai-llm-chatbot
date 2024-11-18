@@ -1,9 +1,11 @@
 import * as cdk from "aws-cdk-lib";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 import * as path from "path";
 import { Layer } from "../layer";
@@ -21,6 +23,10 @@ export interface SharedProps {
 
 export class Shared extends Construct {
   readonly vpc: ec2.Vpc;
+  readonly kmsKey: kms.Key;
+  readonly kmsKeyAlias: string;
+  readonly queueKmsKey: kms.Key;
+  readonly queueKmsKeyAlias: string;
   readonly defaultEnvironmentVariables: Record<string, string>;
   readonly configParameter: ssm.StringParameter;
   readonly pythonRuntime: lambda.Runtime = pythonRuntime;
@@ -31,18 +37,49 @@ export class Shared extends Construct {
   readonly powerToolsLayer: lambda.ILayerVersion;
   readonly sharedCode: SharedAssetBundler;
   readonly s3vpcEndpoint: ec2.InterfaceVpcEndpoint;
+  readonly webACLRules: wafv2.CfnWebACL.RuleProperty[] = [];
 
   constructor(scope: Construct, id: string, props: SharedProps) {
     super(scope, id);
 
-    const powerToolsLayerVersion = "46";
+    this.kmsKeyAlias = props.config.prefix + "genaichatbot-shared-key";
+    this.queueKmsKeyAlias =
+      props.config.prefix + "genaichatbot-queue-shared-key";
+    const powerToolsLayerVersion = "2";
 
     this.defaultEnvironmentVariables = {
       POWERTOOLS_DEV: "false",
       LOG_LEVEL: "INFO",
-      POWERTOOLS_LOGGER_LOG_EVENT: "true",
+      // Event might contain end user information and should not be logged by default
+      POWERTOOLS_LOGGER_LOG_EVENT: "false",
       POWERTOOLS_SERVICE_NAME: "chatbot",
+      AWS_XRAY_SDK_ENABLED: props.config.advancedMonitoring ? "true" : "false",
+      POWERTOOLS_TRACE_DISABLED: props.config.advancedMonitoring
+        ? "false"
+        : "true",
     };
+
+    if (props.config.createCMKs) {
+      this.kmsKey = new kms.Key(this, "KMSKey", {
+        enableKeyRotation: true,
+        // The key is not a data store but is needed to read the retained tables for example
+        removalPolicy:
+          props.config.retainOnDelete === true
+            ? cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE
+            : cdk.RemovalPolicy.DESTROY,
+        alias: this.kmsKeyAlias,
+      });
+
+      // Revisit once the following is merged (Causing circular dependency without a second key)
+      // https://github.com/aws/aws-cdk/pull/31155
+      // Using the same queue for an SQS and event is causing issues.
+      this.queueKmsKey = new kms.Key(this, "QueueKMSKey", {
+        enableKeyRotation: true,
+        // The key is only used for temporary stores (SQS)
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        alias: this.queueKmsKeyAlias,
+      });
+    }
 
     let vpc: ec2.Vpc;
     if (!props.config.vpc?.vpcId) {
@@ -65,7 +102,11 @@ export class Shared extends Construct {
         ],
       });
       const logGroup = new logs.LogGroup(this, "FLowLogsLogGroup", {
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        removalPolicy:
+          props.config.retainOnDelete === true
+            ? cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE
+            : cdk.RemovalPolicy.DESTROY,
+        retention: props.config.logRetention,
       });
       new ec2.FlowLog(this, "FlowLog", {
         resourceType: ec2.FlowLogResourceType.fromVpc(vpc),
@@ -211,14 +252,18 @@ export class Shared extends Construct {
       }
     }
 
+    this.webACLRules = this.createWafRules(props.config.rateLimitPerIP ?? 400);
+
     const configParameter = new ssm.StringParameter(this, "Config", {
       stringValue: JSON.stringify(props.config),
     });
 
+    //https://docs.powertools.aws.dev/lambda/python/3.2.0/
+    const pythonVersion = pythonRuntime.name.replace(".", "");
     const powerToolsArn =
       lambdaArchitecture === lambda.Architecture.X86_64
-        ? `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:017000801446:layer:AWSLambdaPowertoolsPythonV2:${powerToolsLayerVersion}`
-        : `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:017000801446:layer:AWSLambdaPowertoolsPythonV2-Arm64:${powerToolsLayerVersion}`;
+        ? `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:017000801446:layer:AWSLambdaPowertoolsPythonV3-${pythonVersion}-x86_64:${powerToolsLayerVersion}`
+        : `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:017000801446:layer:AWSLambdaPowertoolsPythonV3-${pythonVersion}-arm64:${powerToolsLayerVersion}`;
 
     const powerToolsLayer = lambda.LayerVersion.fromLayerVersionArn(
       this,
@@ -240,6 +285,7 @@ export class Shared extends Construct {
       this,
       "X-Origin-Verify-Secret",
       {
+        encryptionKey: this.kmsKey,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         generateSecretString: {
           excludePunctuation: true,
@@ -250,6 +296,7 @@ export class Shared extends Construct {
     );
 
     const apiKeysSecret = new secretsmanager.Secret(this, "ApiKeysSecret", {
+      encryptionKey: this.kmsKey,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       secretObjectValue: {},
     });
@@ -274,5 +321,33 @@ export class Shared extends Construct {
     NagSuppressions.addResourceSuppressions(apiKeysSecret, [
       { id: "AwsSolutions-SMG4", reason: "Secret value is blank." },
     ]);
+  }
+
+  private createWafRules(ratePerIP: number): wafv2.CfnWebACL.RuleProperty[] {
+    /**
+     * The rate limit is the maximum number of requests from a
+     * single IP address that are allowed in a ten-minute period.
+     * The IP address is automatically unblocked after it falls below the limit.
+     */
+    const ruleLimitRequests: wafv2.CfnWebACL.RuleProperty = {
+      name: "LimitRequestsPerIP",
+      priority: 10,
+      action: {
+        block: {},
+      },
+      statement: {
+        rateBasedStatement: {
+          limit: ratePerIP,
+          evaluationWindowSec: 60 * 10,
+          aggregateKeyType: "IP",
+        },
+      },
+      visibilityConfig: {
+        sampledRequestsEnabled: true,
+        cloudWatchMetricsEnabled: true,
+        metricName: "LimitRequestsPerIP",
+      },
+    };
+    return [ruleLimitRequests];
   }
 }

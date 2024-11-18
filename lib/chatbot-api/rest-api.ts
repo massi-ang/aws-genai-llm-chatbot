@@ -15,6 +15,7 @@ import * as appsync from "aws-cdk-lib/aws-appsync";
 import { parse } from "graphql";
 import { readFileSync } from "fs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import { AURORA_DB_USERS } from "../rag-engines/aurora-pgvector";
 
 export interface ApiResolversProps {
   readonly shared: Shared;
@@ -23,6 +24,7 @@ export interface ApiResolversProps {
   readonly userPool: cognito.UserPool;
   readonly sessionsTable: dynamodb.Table;
   readonly byUserIdIndex: string;
+  readonly filesBucket: s3.Bucket;
   readonly userFeedbackBucket: s3.Bucket;
   readonly modelsParameter: ssm.StringParameter;
   readonly models: SageMakerModelEndpoint[];
@@ -30,6 +32,7 @@ export interface ApiResolversProps {
 }
 
 export class ApiResolvers extends Construct {
+  readonly appSyncLambdaResolver: lambda.Function;
   constructor(scope: Construct, id: string, props: ApiResolversProps) {
     super(scope, id);
 
@@ -45,12 +48,16 @@ export class ApiResolvers extends Construct {
           path.join(__dirname, "./functions/api-handler")
         ),
         handler: "index.handler",
+        description: "Main Appsync resolver",
         runtime: props.shared.pythonRuntime,
         architecture: props.shared.lambdaArchitecture,
         timeout: cdk.Duration.minutes(10),
         memorySize: 512,
-        tracing: lambda.Tracing.ACTIVE,
-        logRetention: logs.RetentionDays.ONE_WEEK,
+        tracing: props.config.advancedMonitoring
+          ? lambda.Tracing.ACTIVE
+          : lambda.Tracing.DISABLED,
+        logRetention: props.config.logRetention ?? logs.RetentionDays.ONE_WEEK,
+        loggingFormat: lambda.LoggingFormat.JSON,
         layers: [props.shared.powerToolsLayer, props.shared.commonLayer],
         vpc: props.shared.vpc,
         securityGroups: [apiSecurityGroup],
@@ -66,10 +73,16 @@ export class ApiResolvers extends Construct {
           SESSIONS_BY_USER_ID_INDEX_NAME: props.byUserIdIndex,
           USER_FEEDBACK_BUCKET_NAME: props.userFeedbackBucket?.bucketName ?? "",
           UPLOAD_BUCKET_NAME: props.ragEngines?.uploadBucket?.bucketName ?? "",
+          CHATBOT_FILES_BUCKET_NAME: props.filesBucket.bucketName,
           PROCESSING_BUCKET_NAME:
             props.ragEngines?.processingBucket?.bucketName ?? "",
-          AURORA_DB_SECRET_ID: props.ragEngines?.auroraPgVector?.database
-            ?.secret?.secretArn as string,
+          AURORA_DB_USER: AURORA_DB_USERS.READ_ONLY,
+          AURORA_DB_HOST:
+            props.ragEngines?.auroraPgVector?.database?.clusterEndpoint
+              ?.hostname ?? "",
+          AURORA_DB_PORT:
+            props.ragEngines?.auroraPgVector?.database?.clusterEndpoint?.port +
+            "",
           WORKSPACES_TABLE_NAME:
             props.ragEngines?.workspacesTable.tableName ?? "",
           WORKSPACES_BY_OBJECT_TYPE_INDEX_NAME:
@@ -81,7 +94,7 @@ export class ApiResolvers extends Construct {
           DOCUMENTS_BY_STATUS_INDEX:
             props.ragEngines?.documentsByStatusIndexName ?? "",
           SAGEMAKER_RAG_MODELS_ENDPOINT:
-            props.ragEngines?.sageMakerRagModels?.model.endpoint
+            props.ragEngines?.sageMakerRagModels?.model?.endpoint
               ?.attrEndpointName ?? "",
           DELETE_WORKSPACE_WORKFLOW_ARN:
             props.ragEngines?.deleteWorkspaceWorkflow?.stateMachineArn ?? "",
@@ -117,6 +130,7 @@ export class ApiResolvers extends Construct {
         },
       }
     );
+    this.appSyncLambdaResolver = appSyncLambdaResolver;
 
     function addPermissions(apiHandler: lambda.Function) {
       if (props.ragEngines?.workspacesTable) {
@@ -131,7 +145,10 @@ export class ApiResolvers extends Construct {
       }
 
       if (props.ragEngines?.auroraPgVector) {
-        props.ragEngines.auroraPgVector.database.secret?.grantRead(apiHandler);
+        props.ragEngines.auroraPgVector.database.grantConnect(
+          apiHandler,
+          AURORA_DB_USERS.READ_ONLY
+        );
         props.ragEngines.auroraPgVector.database.connections.allowDefaultPortFrom(
           apiHandler
         );
@@ -258,7 +275,7 @@ export class ApiResolvers extends Construct {
         props.ragEngines.deleteDocumentWorkflow.grantStartExecution(apiHandler);
       }
 
-      if (props.ragEngines?.sageMakerRagModels) {
+      if (props.ragEngines?.sageMakerRagModels?.model) {
         apiHandler.addToRolePolicy(
           new iam.PolicyStatement({
             actions: ["sagemaker:InvokeEndpoint"],
@@ -292,6 +309,7 @@ export class ApiResolvers extends Construct {
       props.modelsParameter.grantRead(apiHandler);
       props.sessionsTable.grantReadWriteData(apiHandler);
       props.userFeedbackBucket.grantReadWrite(apiHandler);
+      props.filesBucket.grantReadWrite(apiHandler);
       props.ragEngines?.uploadBucket.grantReadWrite(apiHandler);
       props.ragEngines?.processingBucket.grantReadWrite(apiHandler);
 

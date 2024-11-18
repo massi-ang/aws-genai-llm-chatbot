@@ -5,8 +5,8 @@ input CreateWorkspaceAuroraInput {
   kind: String!
   embeddingsModelProvider: String!
   embeddingsModelName: String!
-  crossEncoderModelProvider: String!
-  crossEncoderModelName: String!
+  crossEncoderModelProvider: String
+  crossEncoderModelName: String
   languages: [String!]!
   metric: String!
   index: Boolean!
@@ -35,8 +35,8 @@ input CreateWorkspaceOpenSearchInput {
   kind: String!
   embeddingsModelProvider: String!
   embeddingsModelName: String!
-  crossEncoderModelProvider: String!
-  crossEncoderModelName: String!
+  crossEncoderModelProvider: String
+  crossEncoderModelName: String
   languages: [String!]!
   hybridSearch: Boolean!
   chunkingStrategy: String!
@@ -131,7 +131,7 @@ type EmbeddingModel @aws_cognito_user_pools {
 }
 
 input FileUploadInput {
-  workspaceId: String!
+  workspaceId: String
   fileName: String!
 }
 
@@ -362,6 +362,8 @@ type Mutation {
 type Query {
   checkHealth: Boolean @aws_cognito_user_pools
   getUploadFileURL(input: FileUploadInput!): FileUploadResult
+    @aws_cognito_user_pools
+  getFileURL(fileName: String!): String
     @aws_cognito_user_pools
   listModels: [Model!]! @aws_cognito_user_pools
   listWorkspaces: [Workspace!]! @aws_cognito_user_pools

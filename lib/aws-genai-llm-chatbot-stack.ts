@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { SystemConfig, ModelInterface, Direction } from "./shared/types";
 import { Authentication } from "./authentication";
+import { Monitoring } from "./monitoring";
 import { UserInterface } from "./user-interface";
 import { Shared } from "./shared";
 import { ChatBotApi } from "./chatbot-api";
@@ -12,8 +13,10 @@ import { IdeficsInterface } from "./model-interfaces/idefics";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { NagSuppressions } from "cdk-nag";
+import { LogGroup } from "aws-cdk-lib/aws-logs";
 
 export interface AwsGenAILLMChatbotStackProps extends cdk.StackProps {
   readonly config: SystemConfig;
@@ -66,19 +69,16 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
     );
 
     // check if any deployed model requires langchain interface or if bedrock is enabled from config
+    let langchainInterface: LangChainInterface | undefined;
     if (langchainModels.length > 0 || props.config.bedrock?.enabled) {
-      const langchainInterface = new LangChainInterface(
-        this,
-        "LangchainInterface",
-        {
-          shared,
-          config: props.config,
-          ragEngines,
-          messagesTopic: chatBotApi.messagesTopic,
-          sessionsTable: chatBotApi.sessionsTable,
-          byUserIdIndex: chatBotApi.byUserIdIndex,
-        }
-      );
+      langchainInterface = new LangChainInterface(this, "LangchainInterface", {
+        shared,
+        config: props.config,
+        ragEngines,
+        messagesTopic: chatBotApi.messagesTopic,
+        sessionsTable: chatBotApi.sessionsTable,
+        byUserIdIndex: chatBotApi.byUserIdIndex,
+      });
 
       // Route all incoming messages targeted to langchain to the langchain model interface queue
       chatBotApi.messagesTopic.addSubscription(
@@ -108,12 +108,13 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
     // IDEFICS Interface Construct
     // This is the model interface receiving messages from the websocket interface via the message topic
     // and interacting with IDEFICS visual language models
-    models.models.filter(
-      (model) => model.interface === ModelInterface.MultiModal
+    const ideficsModels = models.models.filter(
+      (model) =>
+        model.interface === ModelInterface.MultiModal &&
+        model.name.toLocaleLowerCase().includes("idefics")
     );
 
     // check if any deployed model requires idefics interface
-
     const ideficsInterface = new IdeficsInterface(this, "IdeficsInterface", {
       shared,
       config: props.config,
@@ -121,6 +122,7 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
       sessionsTable: chatBotApi.sessionsTable,
       byUserIdIndex: chatBotApi.byUserIdIndex,
       chatbotFilesBucket: chatBotApi.filesBucket,
+      createPrivateGateway: ideficsModels.length > 0,
     });
 
     // Route all incoming messages targeted to idefics to the idefics model interface queue
@@ -154,13 +156,9 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
       userPoolId: authentication.userPool.userPoolId,
       userPoolClient: authentication.userPoolClient,
       userPoolClientId: authentication.userPoolClient.userPoolClientId,
-      identityPool: authentication.identityPool,
       api: chatBotApi,
       chatbotFilesBucket: chatBotApi.filesBucket,
-      crossEncodersEnabled:
-        typeof ragEngines?.sageMakerRagModels?.model !== "undefined",
-      sagemakerEmbeddingsEnabled:
-        typeof ragEngines?.sageMakerRagModels?.model !== "undefined",
+      uploadBucket: ragEngines?.uploadBucket,
     });
 
     if (props.config.cognitoFederation?.enabled) {
@@ -218,6 +216,82 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
       }
     }
 
+    const monitoringStack = new cdk.NestedStack(this, "MonitoringStack");
+    const monitoringConstruct = new Monitoring(monitoringStack, "Monitoring", {
+      shared,
+      prefix: props.config.prefix,
+      advancedMonitoring: props.config.advancedMonitoring === true,
+      appsycnApi: chatBotApi.graphqlApi,
+      appsyncResolversLogGroups: chatBotApi.resolvers.map((r) => {
+        return LogGroup.fromLogGroupName(
+          monitoringStack,
+          "Log" + r.node.id,
+          "/aws/lambda/" + r.functionName
+        );
+      }),
+      llmRequestHandlersLogGroups: [
+        ideficsInterface.requestHandler,
+        langchainInterface?.requestHandler,
+      ]
+        .filter((i) => i)
+        .map((r) => {
+          return LogGroup.fromLogGroupName(
+            monitoringStack,
+            "Log" + (r as lambda.Function).node.id,
+            "/aws/lambda/" + (r as lambda.Function).functionName
+          );
+        }),
+      cloudFrontDistribution: userInterface.cloudFrontDistribution,
+      cognito: {
+        userPoolId: authentication.userPool.userPoolId,
+        clientId: authentication.userPoolClient.userPoolClientId,
+      },
+      tables: [
+        chatBotApi.sessionsTable,
+        ...(ragEngines
+          ? [ragEngines.workspacesTable, ragEngines.documentsTable]
+          : []),
+      ],
+      sqs: [
+        chatBotApi.outBoundQueue,
+        ideficsInterface.ingestionQueue,
+        ...(langchainInterface ? [langchainInterface.ingestionQueue] : []),
+      ],
+      aurora: ragEngines?.auroraPgVector?.database,
+      opensearch: ragEngines?.openSearchVector?.openSearchCollection,
+      kendra: ragEngines?.kendraRetrieval?.kendraIndex,
+      buckets: [chatBotApi.filesBucket],
+      ragFunctionProcessing: [
+        ...(ragEngines ? [ragEngines.dataImport.rssIngestorFunction] : []),
+      ],
+      ragImportStateMachineProcessing: [
+        ...(ragEngines
+          ? [
+              ragEngines.dataImport.fileImportWorkflow,
+              ragEngines.dataImport.websiteCrawlingWorkflow,
+            ]
+          : []),
+      ],
+      ragEngineStateMachineProcessing: [
+        ...(ragEngines
+          ? [
+              ragEngines.auroraPgVector?.createAuroraWorkspaceWorkflow,
+              ragEngines.openSearchVector?.createOpenSearchWorkspaceWorkflow,
+              ragEngines.kendraRetrieval?.createKendraWorkspaceWorkflow,
+              ragEngines.deleteDocumentWorkflow,
+              ragEngines.deleteWorkspaceWorkflow,
+            ]
+          : []),
+      ],
+    });
+
+    if (monitoringConstruct.compositeAlarmTopic) {
+      new cdk.CfnOutput(this, "CompositeAlarmTopicOutput", {
+        key: "CompositeAlarmTopicOutput",
+        value: monitoringConstruct.compositeAlarmTopic.topicName,
+      });
+    }
+
     /**
      * CDK NAG suppression
      */
@@ -236,25 +310,34 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
     NagSuppressions.addResourceSuppressionsByPath(
       this,
       [
-        `/${this.stackName}/Authentication/IdentityPool/AuthenticatedRole/DefaultPolicy/Resource`,
         `/${this.stackName}/Authentication/UserPool/smsRole/Resource`,
         `/${this.stackName}/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/ServiceRole/DefaultPolicy/Resource`,
         `/${this.stackName}/LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a/ServiceRole/Resource`,
         `/${this.stackName}/LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a/ServiceRole/DefaultPolicy/Resource`,
-        `/${this.stackName}/LangchainInterface/RequestHandler/ServiceRole/Resource`,
-        `/${this.stackName}/LangchainInterface/RequestHandler/ServiceRole/DefaultPolicy/Resource`,
+
         `/${this.stackName}/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/ServiceRole/Resource`,
         `/${this.stackName}/ChatBotApi/ChatbotApi/proxyResolverFunction/ServiceRole/DefaultPolicy/Resource`,
         `/${this.stackName}/ChatBotApi/ChatbotApi/realtimeResolverFunction/ServiceRole/DefaultPolicy/Resource`,
         `/${this.stackName}/ChatBotApi/RestApi/GraphQLApiHandler/ServiceRole/Resource`,
         `/${this.stackName}/ChatBotApi/RestApi/GraphQLApiHandler/ServiceRole/DefaultPolicy/Resource`,
         `/${this.stackName}/ChatBotApi/Realtime/Resolvers/lambda-resolver/ServiceRole/Resource`,
+        `/${this.stackName}/ChatBotApi/Realtime/Resolvers/lambda-resolver/ServiceRole/DefaultPolicy/Resource`,
         `/${this.stackName}/ChatBotApi/Realtime/Resolvers/outgoing-message-handler/ServiceRole/Resource`,
         `/${this.stackName}/ChatBotApi/Realtime/Resolvers/outgoing-message-handler/ServiceRole/DefaultPolicy/Resource`,
-        `/${this.stackName}/IdeficsInterface/IdeficsInterfaceRequestHandler/ServiceRole/DefaultPolicy/Resource`,
-        `/${this.stackName}/IdeficsInterface/IdeficsInterfaceRequestHandler/ServiceRole/Resource`,
-        `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/CloudWatchRole/Resource`,
-        `/${this.stackName}/IdeficsInterface/S3IntegrationRole/DefaultPolicy/Resource`,
+        `/${this.stackName}/IdeficsInterface/MultiModalInterfaceRequestHandler/ServiceRole/DefaultPolicy/Resource`,
+        `/${this.stackName}/IdeficsInterface/MultiModalInterfaceRequestHandler/ServiceRole/Resource`,
+        ...(langchainInterface
+          ? [
+              `/${this.stackName}/LangchainInterface/RequestHandler/ServiceRole/Resource`,
+              `/${this.stackName}/LangchainInterface/RequestHandler/ServiceRole/DefaultPolicy/Resource`,
+            ]
+          : []),
+        ...(ideficsModels.length > 0
+          ? [
+              `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/CloudWatchRole/Resource`,
+              `/${this.stackName}/IdeficsInterface/S3IntegrationRole/DefaultPolicy/Resource`,
+            ]
+          : []),
       ],
       [
         {
@@ -267,27 +350,29 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
         },
       ]
     );
-    NagSuppressions.addResourceSuppressionsByPath(
-      this,
-      `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/DeploymentStage.prod/Resource`,
-      [
-        {
-          id: "AwsSolutions-APIG3",
-          reason: "WAF not required due to configured Cognito auth.",
-        },
-      ]
-    );
-    NagSuppressions.addResourceSuppressionsByPath(
-      this,
-      [
-        `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/Default/{object}/ANY/Resource`,
-        `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/Default/{object}/ANY/Resource`,
-      ],
-      [
-        { id: "AwsSolutions-APIG4", reason: "Private API within a VPC." },
-        { id: "AwsSolutions-COG4", reason: "Private API within a VPC." },
-      ]
-    );
+
+    if (ideficsModels.length > 0) {
+      NagSuppressions.addResourceSuppressionsByPath(
+        this,
+        `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/DeploymentStage.prod/Resource`,
+        [
+          {
+            id: "AwsSolutions-APIG3",
+            reason: "WAF not required due to configured Cognito auth.",
+          },
+        ]
+      );
+      NagSuppressions.addResourceSuppressionsByPath(
+        this,
+        [
+          `/${this.stackName}/IdeficsInterface/ChatbotFilesPrivateApi/Default/{folder}/{key}/GET/Resource`,
+        ],
+        [
+          { id: "AwsSolutions-APIG4", reason: "Private API within a VPC." },
+          { id: "AwsSolutions-COG4", reason: "Private API within a VPC." },
+        ]
+      );
+    }
 
     // RAG configuration
     if (props.config.rag.enabled) {
@@ -308,8 +393,6 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
           `/${this.stackName}/RagEngines/Workspaces/DeleteDocument/DeleteDocumentFunction/ServiceRole/Resource`,
           `/${this.stackName}/RagEngines/Workspaces/DeleteDocument/DeleteDocumentFunction/ServiceRole/DefaultPolicy/Resource`,
           `/${this.stackName}/RagEngines/Workspaces/DeleteDocument/DeleteDocument/Role/DefaultPolicy/Resource`,
-          `/${this.stackName}/RagEngines/DataImport/FileImportBatchJob/ManagedEc2EcsComputeEnvironment/InstanceProfileRole/Resource`,
-          `/${this.stackName}/RagEngines/DataImport/WebCrawlerBatchJob/WebCrawlerManagedEc2EcsComputeEnvironment/InstanceProfileRole/Resource`,
           `/${this.stackName}/BucketNotificationsHandler050a0587b7544547bf325f094a3db834/Role/Resource`,
           `/${this.stackName}/BucketNotificationsHandler050a0587b7544547bf325f094a3db834/Role/DefaultPolicy/Resource`,
           `/${this.stackName}/RagEngines/DataImport/RssSubscription/RssIngestor/ServiceRole/Resource`,
@@ -331,10 +414,7 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
         ]
       );
 
-      if (
-        props.config.rag.engines.aurora.enabled ||
-        props.config.rag.engines.opensearch.enabled
-      ) {
+      if (ragEngines?.sageMakerRagModels?.model) {
         NagSuppressions.addResourceSuppressionsByPath(
           this,
           [
@@ -370,59 +450,59 @@ export class AwsGenAILLMChatbotStack extends cdk.Stack {
             },
           ]
         );
-        if (props.config.rag.engines.aurora.enabled) {
-          NagSuppressions.addResourceSuppressionsByPath(
-            this,
-            `/${this.stackName}/RagEngines/AuroraPgVector/AuroraDatabase/Secret/Resource`,
-            [
-              {
-                id: "AwsSolutions-SMG4",
-                reason: "Secret created implicitly by CDK.",
-              },
-            ]
-          );
-          NagSuppressions.addResourceSuppressionsByPath(
-            this,
-            [
-              `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupFunction/ServiceRole/Resource`,
-              `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupProvider/framework-onEvent/ServiceRole/Resource`,
-              `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupProvider/framework-onEvent/ServiceRole/DefaultPolicy/Resource`,
-              `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspaceFunction/ServiceRole/Resource`,
-              `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspaceFunction/ServiceRole/DefaultPolicy/Resource`,
-              `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspace/Role/DefaultPolicy/Resource`,
-            ],
-            [
-              {
-                id: "AwsSolutions-IAM4",
-                reason: "IAM role implicitly created by CDK.",
-              },
-              {
-                id: "AwsSolutions-IAM5",
-                reason: "IAM role implicitly created by CDK.",
-              },
-            ]
-          );
-        }
-        if (props.config.rag.engines.opensearch.enabled) {
-          NagSuppressions.addResourceSuppressionsByPath(
-            this,
-            [
-              `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspaceFunction/ServiceRole/Resource`,
-              `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspaceFunction/ServiceRole/DefaultPolicy/Resource`,
-              `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspace/Role/DefaultPolicy/Resource`,
-            ],
-            [
-              {
-                id: "AwsSolutions-IAM4",
-                reason: "IAM role implicitly created by CDK.",
-              },
-              {
-                id: "AwsSolutions-IAM5",
-                reason: "IAM role implicitly created by CDK.",
-              },
-            ]
-          );
-        }
+      }
+      if (props.config.rag.engines.aurora.enabled) {
+        NagSuppressions.addResourceSuppressionsByPath(
+          this,
+          `/${this.stackName}/RagEngines/AuroraPgVector/AuroraDatabase/Secret/Resource`,
+          [
+            {
+              id: "AwsSolutions-SMG4",
+              reason: "Secret created implicitly by CDK.",
+            },
+          ]
+        );
+        NagSuppressions.addResourceSuppressionsByPath(
+          this,
+          [
+            `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupFunction/ServiceRole/Resource`,
+            `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupProvider/framework-onEvent/ServiceRole/Resource`,
+            `/${this.stackName}/RagEngines/AuroraPgVector/DatabaseSetupProvider/framework-onEvent/ServiceRole/DefaultPolicy/Resource`,
+            `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspaceFunction/ServiceRole/Resource`,
+            `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspaceFunction/ServiceRole/DefaultPolicy/Resource`,
+            `/${this.stackName}/RagEngines/AuroraPgVector/CreateAuroraWorkspace/CreateAuroraWorkspace/Role/DefaultPolicy/Resource`,
+          ],
+          [
+            {
+              id: "AwsSolutions-IAM4",
+              reason: "IAM role implicitly created by CDK.",
+            },
+            {
+              id: "AwsSolutions-IAM5",
+              reason: "IAM role implicitly created by CDK.",
+            },
+          ]
+        );
+      }
+      if (props.config.rag.engines.opensearch.enabled) {
+        NagSuppressions.addResourceSuppressionsByPath(
+          this,
+          [
+            `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspaceFunction/ServiceRole/Resource`,
+            `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspaceFunction/ServiceRole/DefaultPolicy/Resource`,
+            `/${this.stackName}/RagEngines/OpenSearchVector/CreateOpenSearchWorkspace/CreateOpenSearchWorkspace/Role/DefaultPolicy/Resource`,
+          ],
+          [
+            {
+              id: "AwsSolutions-IAM4",
+              reason: "IAM role implicitly created by CDK.",
+            },
+            {
+              id: "AwsSolutions-IAM5",
+              reason: "IAM role implicitly created by CDK.",
+            },
+          ]
+        );
       }
       if (props.config.rag.engines.kendra.enabled) {
         NagSuppressions.addResourceSuppressionsByPath(
